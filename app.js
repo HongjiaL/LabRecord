@@ -1239,9 +1239,6 @@ class MeetingApp {
     this._bindFileUpload(lid);
   }
 
-  _bindKeywordTags(lid) {
-  }
-
   _collectFormData() {
     const date = document.getElementById('f-date').value;
     const topic = document.getElementById('f-topic').value.trim();
