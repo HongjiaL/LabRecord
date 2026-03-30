@@ -53,149 +53,30 @@ function _getMimeType(fileName) {
   return map[ext] || 'application/octet-stream';
 }
 
-// ─── GitHub Repository Storage ──────────────────────────────────────────────
-class GitHubRepoStorage {
-  constructor() {
-    this.TOKEN_KEY = 'github_repo_token';
-    this.OWNER = 'HongjiaL';
-    this.REPO = 'LabRecord';
-    this.BRANCH = 'token';
-    this.UPLOAD_DIR = 'uploads';
-    this.API_BASE = `https://api.github.com/repos/${this.OWNER}/${this.REPO}/contents`;
-  }
-
-  getToken() { return localStorage.getItem(this.TOKEN_KEY) || null; }
-
-  hasToken() { return !!this.getToken(); }
-
-  setToken(token) { localStorage.setItem(this.TOKEN_KEY, token); }
-
-  removeToken() { localStorage.removeItem(this.TOKEN_KEY); }
-
-  async validateToken(token) {
-    try {
-      const res = await fetch(`https://api.github.com/repos/${this.OWNER}/${this.REPO}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28'
-        }
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        return { ok: false, error: `${res.status} — ${err.message || '无权访问该仓库'}` };
-      }
-      const repo = await res.json();
-      return { ok: true, name: repo.name, description: repo.description || '' };
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
-  }
-
-  async uploadFile(base64Content, fileName, meetingId) {
-    const token = this.getToken();
-    if (!token) throw new Error('未设置 GitHub Token');
-
-    const path = `${this.UPLOAD_DIR}/${meetingId}/${fileName}`;
-    const url = `${this.API_BASE}/${path}`;
-
-    // Check if file already exists to get SHA
-    let sha = null;
-    try {
-      const getRes = await fetch(`${url}?ref=${this.BRANCH}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github+json'
-        }
-      });
-      if (getRes.ok) {
-        const data = await getRes.json();
-        sha = data.sha;
-      }
-    } catch (_) { /* ignore — file doesn't exist yet */ }
-
-    const body = {
-      message: `Upload: ${fileName} (meeting: ${meetingId})`,
-      content: base64Content,
-      branch: this.BRANCH
-    };
-    if (sha) body.sha = sha;
-
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      },
-      body: JSON.stringify(body)
+// ─── File API (via Vercel backend — Token is on server side) ─────────────────
+const FileAPI = {
+  async upload(base64Content, fileName, meetingId) {
+    const res = await fetch('/api/files/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base64Content, fileName, meetingId })
     });
-
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`上传失败: ${res.status} — ${err.message || ''}`);
+      throw new Error(`上传失败: ${err.error || res.status}`);
     }
+    return await res.json();
+  },
 
-    const data = await res.json();
-    return {
-      sha: data.content.sha,
-      path: data.content.path,
-      downloadUrl: data.content.download_url
-    };
-  }
-
-  async downloadFile(fileName, meetingId) {
-    const token = this.getToken();
-    if (!token) return { ok: false, error: '未设置 GitHub Token' };
-
-    const path = `${this.UPLOAD_DIR}/${meetingId}/${fileName}`;
-    const url = `${this.API_BASE}/${path}?ref=${this.BRANCH}`;
-    const res = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      }
-    });
+  async download(fileName, meetingId) {
+    const res = await fetch(`/api/files/download?meetingId=${encodeURIComponent(meetingId)}&fileName=${encodeURIComponent(fileName)}`);
     if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status}`, status: res.status };
+      const err = await res.json().catch(() => ({}));
+      return { ok: false, error: err.error || `HTTP ${res.status}`, status: res.status };
     }
-    const data = await res.json();
-
-    // 小文件（约 ≤1MB）：Contents API 直接返回 base64 content
-    let base64 = (data.content && String(data.content).trim())
-      ? String(data.content).replace(/\s/g, '')
-      : '';
-
-    // 大文件：Contents API 不返回 content，需用 blob SHA 走 Git Blobs API
-    if (!base64 && data.sha) {
-      const blobUrl = `https://api.github.com/repos/${this.OWNER}/${this.REPO}/git/blobs/${data.sha}`;
-      const blobRes = await fetch(blobUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28'
-        }
-      });
-      if (!blobRes.ok) {
-        return { ok: false, error: `Blob API HTTP ${blobRes.status}` };
-      }
-      const blobData = await blobRes.json();
-      if (blobData.encoding !== 'base64' || !blobData.content) {
-        return { ok: false, error: '无法读取文件二进制内容（Blob API 无 base64）' };
-      }
-      base64 = String(blobData.content).replace(/\s/g, '');
-    }
-
-    if (!base64) {
-      return { ok: false, error: '未获取到文件内容' };
-    }
-    return { ok: true, content: base64 };
+    return await res.json();
   }
-}
-
-const repoStorage = new GitHubRepoStorage();
+};
 
 // ─── Storage ───────────────────────────────────────────────────────────────
 // All methods are async and call the Vercel Serverless API backed by Supabase.
@@ -393,85 +274,6 @@ class MeetingApp {
     document.getElementById('btn-new-meeting').addEventListener('click', () => {
       location.hash = '#new-meeting';
     });
-
-    // GitHub Settings Modal
-    const modal = document.getElementById('github-settings-modal');
-    const tokenInput = document.getElementById('github-token-input');
-    const statusDiv = document.getElementById('github-status');
-    const saveBtn = document.getElementById('github-save-btn');
-    const testBtn = document.getElementById('github-test-btn');
-    const removeBtn = document.getElementById('github-remove-btn');
-
-    const showStatus = (msg, type) => {
-      statusDiv.style.display = 'flex';
-      statusDiv.className = `alert alert-${type}`;
-      statusDiv.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>${msg}</span>`;
-    };
-    const hideStatus = () => { statusDiv.style.display = 'none'; };
-
-    const openModal = () => {
-      hideStatus();
-      if (repoStorage.hasToken()) {
-        tokenInput.value = '\u2022'.repeat(18);
-        removeBtn.style.display = '';
-        saveBtn.textContent = '更新 Token';
-        testBtn.style.display = 'none';
-      } else {
-        tokenInput.value = '';
-        removeBtn.style.display = 'none';
-        saveBtn.textContent = '保存 Token';
-        testBtn.style.display = '';
-      }
-      modal.classList.add('active');
-    };
-
-    const closeModal = () => modal.classList.remove('active');
-
-    document.getElementById('btn-github-settings').addEventListener('click', openModal);
-    document.getElementById('github-settings-close').addEventListener('click', closeModal);
-    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
-
-    saveBtn.addEventListener('click', () => {
-      const token = tokenInput.value.trim();
-      if (!token || token === '\u2022'.repeat(18)) {
-        showStatus('请输入有效的 Token', 'warning');
-        return;
-      }
-      repoStorage.setToken(token);
-      showStatus('Token 已保存', 'success');
-      removeBtn.style.display = '';
-      saveBtn.textContent = '更新 Token';
-      testBtn.style.display = 'none';
-    });
-
-    testBtn.addEventListener('click', async () => {
-      const token = tokenInput.value.trim();
-      if (!token) { showStatus('请输入 Token', 'warning'); return; }
-      testBtn.disabled = true;
-      testBtn.textContent = '测试中...';
-      const result = await repoStorage.validateToken(token);
-      if (result.ok) {
-        showStatus(`连接成功！仓库: <strong>${escapeHtml(result.name)}</strong>`, 'success');
-        repoStorage.setToken(token);
-        removeBtn.style.display = '';
-        saveBtn.textContent = '更新 Token';
-        testBtn.style.display = 'none';
-      } else {
-        showStatus(`连接失败: ${result.error}`, 'warning');
-      }
-      testBtn.disabled = false;
-      testBtn.textContent = '测试连接';
-    });
-
-    removeBtn.addEventListener('click', () => {
-      repoStorage.removeToken();
-      tokenInput.value = '';
-      removeBtn.style.display = 'none';
-      saveBtn.textContent = '保存 Token';
-      testBtn.style.display = '';
-      showStatus('Token 已移除', 'warning');
-    });
-  }
 
   _bindImportExport() {
     document.getElementById('btn-export').addEventListener('click', async () => {
@@ -793,7 +595,7 @@ class MeetingApp {
       link.textContent = '加载中...';
       link.disabled = true;
       try {
-        const result = await repoStorage.downloadFile(fileName, meetingId);
+        const result = await FileAPI.download(fileName, meetingId);
         if (result.ok && result.content) {
           const mimeType = _getMimeType(fileName);
           const binary = atob(result.content);
@@ -807,7 +609,7 @@ class MeetingApp {
           a.click();
           URL.revokeObjectURL(objectUrl);
         } else {
-          alert('无法从 GitHub 加载文件。\n\n' + (result.error || '未知错误'));
+          alert('文件下载失败。\n\n' + (result.error || '未知错误'));
         }
       } catch (err) {
         alert('下载失败: ' + err.message);
@@ -1068,15 +870,9 @@ class MeetingApp {
         const fullDataUrl = ev.target.result;
         const base64Content = fullDataUrl.split(',')[1];
 
-        if (repoStorage.hasToken()) {
-          showUploadStatus(`${Icon.upload} 文件已准备好，将在保存时上传到 GitHub`, 'success');
+        showUploadStatus(`${Icon.upload} 文件已准备好，将在保存时上传`, 'success');
           pptData.value = `pending:${base64Content}`;
           pptName.value = file.name;
-        } else {
-          showUploadStatus(`${Icon.info} 使用本地存储（建议设置 GitHub 仓库以突破容量限制）`, 'warning');
-          pptData.value = `local:${base64Content}`;
-          pptName.value = file.name;
-        }
 
         uploadedName.textContent = file.name;
         uploadArea.style.display = 'none';
@@ -1155,17 +951,15 @@ class MeetingApp {
         // Upload PPT to GitHub if pending
         if (lit.pptDataUrl && lit.pptDataUrl.startsWith('pending:')) {
           const base64Content = lit.pptDataUrl.slice(8);
-          if (base64Content && repoStorage.hasToken()) {
+          if (base64Content) {
             try {
-              const result = await repoStorage.uploadFile(base64Content, pptFileName, meetingId);
+              const result = await FileAPI.upload(base64Content, pptFileName, meetingId);
               lit.pptDataUrl = `repo:${result.sha}`;
             } catch {
               lit.pptDataUrl = `local:${base64Content}`;
             }
-          } else if (!base64Content) {
-            lit.pptDataUrl = '';
           } else {
-            lit.pptDataUrl = `local:${base64Content}`;
+            lit.pptDataUrl = '';
           }
         }
 
@@ -1282,19 +1076,16 @@ class MeetingApp {
       const data = this._collectFormData();
 
       // Upload pending files to GitHub
-      if (repoStorage.hasToken()) {
-        for (const p of (data.participants || [])) {
-          for (const l of (p.literature || [])) {
-            if (l.pptDataUrl && l.pptDataUrl.startsWith('pending:')) {
-              const base64Content = l.pptDataUrl.slice(8); // remove 'pending:' prefix
-              if (!base64Content) continue;
-              try {
-                const result = await repoStorage.uploadFile(base64Content, l.pptFileName, targetId);
-                l.pptDataUrl = `repo:${result.sha}`;
-              } catch (err) {
-                // Fallback to local storage on failure
-                l.pptDataUrl = `local:${base64Content}`;
-              }
+      for (const p of (data.participants || [])) {
+        for (const l of (p.literature || [])) {
+          if (l.pptDataUrl && l.pptDataUrl.startsWith('pending:')) {
+            const base64Content = l.pptDataUrl.slice(8);
+            if (!base64Content) continue;
+            try {
+              const result = await FileAPI.upload(base64Content, l.pptFileName, targetId);
+              l.pptDataUrl = `repo:${result.sha}`;
+            } catch (err) {
+              l.pptDataUrl = `local:${base64Content}`;
             }
           }
         }
@@ -1302,16 +1093,6 @@ class MeetingApp {
 
       let ok;
       if (editId) {
-        // For existing meetings: re-upload files that are already repo: (need new SHA each time)
-        if (repoStorage.hasToken()) {
-          for (const p of (data.participants || [])) {
-            for (const l of (p.literature || [])) {
-              if (l.pptDataUrl && l.pptDataUrl.startsWith('repo:')) {
-                const base64Content = l.pptDataUrl.slice(5); // not present in repo: format — skip
-              }
-            }
-          }
-        }
         ok = await Storage.updateMeeting(editId, data);
         if (ok) location.hash = `#meeting/${editId}`;
       } else {
