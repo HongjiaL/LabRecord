@@ -111,18 +111,30 @@ async function handleGetMeetings(req, res) {
   }
 }
 
+function isValidUuid(str) {
+  return typeof str === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+}
+
 async function handleCreateMeeting(req, res) {
   try {
-    const { date, topic, notes, participants } = req.body;
+    const { id: clientMeetingId, date, topic, notes, participants } = req.body;
 
     if (!date) {
       return res.status(400).json({ error: 'date is required' });
     }
 
+    // 与前端一致：新建组会时前端先用 targetId 把 PPT 传到 GitHub uploads/{meetingId}/，
+    // 若此处忽略 id 而由数据库随机生成，下载时会用错路径导致 HTTP 404。
+    const insertRow = { date, topic, notes };
+    if (isValidUuid(clientMeetingId)) {
+      insertRow.id = clientMeetingId;
+    }
+
     // Insert meeting
     const { data: meeting, error: meetingError } = await supabase
       .from('meetings')
-      .insert({ date, topic, notes })
+      .insert(insertRow)
       .select()
       .single();
 
