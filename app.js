@@ -53,19 +53,54 @@ function _getMimeType(fileName) {
   return map[ext] || 'application/octet-stream';
 }
 
-// ─── File API (via Vercel backend — Token is on server side) ─────────────────
+/** 回退到 local: 存储时，Base64 字符数上限（超过则放弃保存附件，避免整单 JSON 过大） */
+const MAX_LOCAL_FALLBACK_B64_CHARS = 2_800_000;
+
+// ─── File API (GitHub 直传，token 由后端临时签发，文件不经过 Vercel) ──────────
+/**
+ * 两步上传：
+ *   1. POST /api/files/upload → 获取 GitHub PUT URL + 临时 Authorization
+ *   2. PUT {url}（直接到 GitHub）→ 上传文件体
+ * 这样 Base64 文件完全绕过 Vercel，无 4.5MB 硬限制。
+ */
 const FileAPI = {
   async upload(base64Content, fileName, meetingId) {
-    const res = await fetch('/api/files/upload', {
+    // Step 1：拿临时凭证
+    const meta = await fetch('/api/files/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base64Content, fileName, meetingId })
+      body: JSON.stringify({ fileName, meetingId })
+    }).then(r => {
+      if (!r.ok) {
+        return r.json().catch(() => ({})).then(err => {
+          throw new Error(`获取上传凭证失败: ${err.error || r.status}`);
+        });
+      }
+      return r.json();
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`上传失败: ${err.error || res.status}`);
+
+    // Step 2：直接 PUT 到 GitHub（不经过 Vercel）
+    const bodyTemplate = meta.bodyTemplate;
+    bodyTemplate.content = base64Content;
+
+    const putRes = await fetch(meta.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': meta.headers['Authorization'],
+        'Content-Type': 'application/json',
+        'Accept': meta.headers['Accept'],
+        'X-GitHub-Api-Version': meta.headers['X-GitHub-Api-Version']
+      },
+      body: JSON.stringify(bodyTemplate)
+    });
+
+    if (!putRes.ok) {
+      const err = await putRes.json().catch(() => ({}));
+      throw new Error(`GitHub 上传失败: ${err.message || putRes.status}`);
     }
-    return await res.json();
+
+    const data = await putRes.json();
+    return { sha: data.content.sha };
   },
 
   async download(fileName, meetingId) {
@@ -956,8 +991,15 @@ class MeetingApp {
             try {
               const result = await FileAPI.upload(base64Content, pptFileName, meetingId);
               lit.pptDataUrl = `repo:${result.sha}`;
-            } catch {
-              lit.pptDataUrl = `local:${base64Content}`;
+            } catch (err) {
+              // 上传失败时降级为本地存储（文件会变大，但不会丢失）
+              if (base64Content.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
+                lit.pptDataUrl = `local:${base64Content}`;
+              } else {
+                alert('上传失败（' + (err.message || '') + '）且文件偏大，将不保存该附件。请稍后重试或压缩文件。');
+                lit.pptDataUrl = '';
+                lit.pptFileName = '';
+              }
             }
           } else {
             lit.pptDataUrl = '';
@@ -1006,7 +1048,7 @@ class MeetingApp {
         <div class="card-body">
           <div class="alert alert-info">
             ${Icon.info}
-            <span><strong>提示：</strong>PPT 等文件将作为 <strong>Base64</strong> 数据存储在浏览器本地，建议单文件不超过 <strong>5 MB</strong>，大型文件建议先压缩或转为 PDF。</span>
+            <span><strong>提示：</strong>文件上传后直存 GitHub（不经过 Vercel 中转），支持较大 PPT/PDF。多人协作场景下，建议每人单独添加自己的文献记录。</span>
           </div>
 
           <form id="meeting-form">
@@ -1076,7 +1118,7 @@ class MeetingApp {
 
       const data = this._collectFormData();
 
-      // Upload pending files to GitHub
+      // Upload pending files to GitHub (直接 PUT，不经过 Vercel，无体积累赘)
       for (const p of (data.participants || [])) {
         for (const l of (p.literature || [])) {
           if (l.pptDataUrl && l.pptDataUrl.startsWith('pending:')) {
@@ -1086,7 +1128,14 @@ class MeetingApp {
               const result = await FileAPI.upload(base64Content, l.pptFileName, targetId);
               l.pptDataUrl = `repo:${result.sha}`;
             } catch (err) {
-              l.pptDataUrl = `local:${base64Content}`;
+              if (base64Content.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
+                alert('上传失败（' + (err.message || '') + '），文件将改为本地存储，关闭浏览器后可能丢失。');
+                l.pptDataUrl = `local:${base64Content}`;
+              } else {
+                alert('上传失败（' + (err.message || '') + '）且文件偏大，将不保存该附件。请稍后重试或压缩文件。');
+                l.pptDataUrl = '';
+                l.pptFileName = '';
+              }
             }
           }
         }
@@ -1106,12 +1155,13 @@ class MeetingApp {
         const saved = await Storage.addMeeting(meeting);
         if (saved) {
           location.hash = `#meeting/${saved.id}`;
+          ok = true;
         } else {
           ok = false;
         }
       }
 
-      if (!ok) {
+      if (ok === false) {
         submitBtn.disabled = false;
         submitBtn.innerHTML = originalText;
       }

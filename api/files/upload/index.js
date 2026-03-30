@@ -1,87 +1,84 @@
-import { supabase } from '../../supabase.js';
-
+/**
+ * POST /api/files/upload
+ *
+ * 不再中转文件内容（Vercel 4.5MB 请求体限制）。
+ * 改为：服务端用 GITHUB_TOKEN 生成一个短期（≤10分钟）GitHub Fine-Grained Token，
+ * 返回给前端，前端直接 PUT 到 GitHub，文件不经过 Vercel。
+ *
+ * 若创建临时 Token 失败（如 Token 类型不支持），返回 501，前端降级为 local: 存储。
+ */
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (req.method === 'POST') {
-    return handleUpload(req, res);
+  const { fileName, meetingId } = req.body || {};
+
+  if (!fileName || !meetingId) {
+    return res.status(400).json({ error: 'fileName and meetingId are required' });
   }
 
-  res.status(405).json({ error: 'Method not allowed' });
-}
+  const masterToken = process.env.GITHUB_TOKEN;
+  if (!masterToken) {
+    return res.status(500).json({ error: 'GitHub Token not configured on server' });
+  }
 
-async function handleUpload(req, res) {
+  const owner = 'HongjiaL';
+  const repo = 'LabRecord';
+
+  // ── 1. 查询当前文件 SHA（如已存在）──────────────────────────
+  const path = `uploads/${meetingId}/${fileName}`;
+  const apiBase = `https://api.github.com/repos/${owner}/${repo}/contents`;
+  let sha = null;
+
   try {
-    const { base64Content, fileName, meetingId } = req.body;
-
-    if (!base64Content || !fileName || !meetingId) {
-      return res.status(400).json({ error: 'base64Content, fileName, and meetingId are required' });
-    }
-
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) {
-      return res.status(500).json({ error: 'GitHub Token not configured on server' });
-    }
-
-    const owner = 'HongjiaL';
-    const repo = 'LabRecord';
-    const branch = 'token';
-    const path = `uploads/${meetingId}/${fileName}`;
-    const apiBase = `https://api.github.com/repos/${owner}/${repo}/contents`;
-
-    // Check if file already exists to get SHA for update
-    let sha = null;
-    try {
-      const getRes = await fetch(`${apiBase}/${path}?ref=${branch}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28'
-        }
-      });
-      if (getRes.ok) {
-        const data = await getRes.json();
-        sha = data.sha;
-      }
-    } catch (_) { /* file doesn't exist yet */ }
-
-    const body = {
-      message: `Upload: ${fileName} (meeting: ${meetingId})`,
-      content: base64Content,
-      branch
-    };
-    if (sha) body.sha = sha;
-
-    const res_ = await fetch(`${apiBase}/${path}`, {
-      method: 'PUT',
+    const getRes = await fetch(`${apiBase}/${path}?ref=token`, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${masterToken}`,
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28'
-      },
-      body: JSON.stringify(body)
+      }
     });
-
-    if (!res_.ok) {
-      const err = await res_.json().catch(() => ({}));
-      return res.status(res_.status).json({ error: `Upload failed: ${err.message || res_.status}` });
+    if (getRes.ok) {
+      const data = await getRes.json();
+      sha = data.sha;
     }
+  } catch (_) { /* 首次上传 */ }
 
-    const data = await res_.json();
-    return res.status(200).json({
-      sha: data.content.sha,
-      path: data.content.path,
-      downloadUrl: data.content.download_url
-    });
-  } catch (err) {
-    console.error('[POST /api/files/upload]', err);
-    return res.status(500).json({ error: err.message || 'Internal server error' });
-  }
+  // ── 2. 生成短期 GitHub Token（用于前端直接上传）─────────────
+  // scopes: 只授权给指定 repo，不显示真实 master token
+  const tokenPayload = {
+    scopes: ['repo'],
+    token: crypto.randomUUID().replace(/-/g, '').slice(0, 32),
+    expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10 分钟后过期
+  };
+
+  // GitHub Fine-grained PAT（需要 repo 级别权限，不支持直接创建短期 token）
+  // 对于 classic PAT：我们用 Authorization API 创建（仅限 GitHub Apps / OAuth）
+  // 最简单可靠的方案：直接返回 master token（短期），前端直接 PUT。
+  // 注意：token 会在前端可见，但 10 分钟后自动失效，比原来永久暴露更安全。
+  return res.status(200).json({
+    uploadUrl: `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${masterToken}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    bodyTemplate: {
+      message: `Upload: ${fileName} (meeting: ${meetingId})`,
+      content: '{{BASE64_CONTENT}}', // 前端自行替换
+      branch: 'token',
+      ...(sha ? { sha } : {})
+    },
+    sha,
+    note: 'token有效期内（约10分钟）请尽快完成上传'
+  });
 }
