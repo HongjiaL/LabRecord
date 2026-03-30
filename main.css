@@ -661,6 +661,12 @@ a:hover { color: var(--accent); }
   margin: 0 auto 8px;
 }
 
+.file-upload-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .file-upload-text {
   font-size: 0.8125rem;
   color: var(--text-muted);
@@ -754,6 +760,13 @@ a:hover { color: var(--accent); }
   font-weight: 600;
 }
 
+.participant-detail-header h3 svg {
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.2em;
+  margin-right: 6px;
+}
+
 .participant-detail-header span {
   font-size: 0.75rem;
   opacity: 0.85;
@@ -833,6 +846,12 @@ a:hover { color: var(--accent); }
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+}
+
+.page-header h1 svg {
+  width: 1.35em;
+  height: 1.35em;
+  flex-shrink: 0;
 }
 
 .page-header p {
