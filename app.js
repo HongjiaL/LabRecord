@@ -274,6 +274,7 @@ class MeetingApp {
     document.getElementById('btn-new-meeting').addEventListener('click', () => {
       location.hash = '#new-meeting';
     });
+  }
 
   _bindImportExport() {
     document.getElementById('btn-export').addEventListener('click', async () => {
