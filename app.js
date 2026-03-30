@@ -198,59 +198,95 @@ class GitHubRepoStorage {
 const repoStorage = new GitHubRepoStorage();
 
 // ─── Storage ───────────────────────────────────────────────────────────────
+// All methods are async and call the Vercel Serverless API backed by Supabase.
 const Storage = {
   KEY: 'labMeetingRecords',
 
-  load() {
+  async load() {
     try {
-      const raw = localStorage.getItem(this.KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
+      const res = await fetch('/api/meetings');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      // Fallback to localStorage if API is unavailable
+      console.warn('[Storage.load] API failed, falling back to localStorage', e);
+      try {
+        const raw = localStorage.getItem(this.KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch {
+        return [];
+      }
     }
   },
 
-  save(records) {
+  async getMeeting(id) {
     try {
-      localStorage.setItem(this.KEY, JSON.stringify(records));
+      const res = await fetch(`/api/meetings/${id}`);
+      if (!res.ok) {
+        if (res.status === 404) return null;
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return await res.json();
+    } catch (e) {
+      console.warn('[Storage.getMeeting] API failed, falling back to localStorage', e);
+      const raw = localStorage.getItem(this.KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      return data.find(m => m.id === id) || null;
+    }
+  },
+
+  async addMeeting(data) {
+    try {
+      const res = await fetch('/api/meetings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      console.error('[Storage.addMeeting]', e);
+      alert('保存失败，请检查网络连接。\n' + e.message);
+      return null;
+    }
+  },
+
+  async updateMeeting(id, data) {
+    try {
+      const res = await fetch(`/api/meetings/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return true;
     } catch (e) {
-      alert('存储空间不足，建议导出数据备份后清理部分记录。\n\n' + e.message);
+      console.error('[Storage.updateMeeting]', e);
+      alert('保存失败，请检查网络连接。\n' + e.message);
       return false;
     }
   },
 
-  getMeeting(id) {
-    return this.load().find(m => m.id === id);
+  async deleteMeeting(id) {
+    try {
+      const res = await fetch(`/api/meetings/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return true;
+    } catch (e) {
+      console.error('[Storage.deleteMeeting]', e);
+      alert('删除失败，请检查网络连接。\n' + e.message);
+      return false;
+    }
   },
 
-  addMeeting(data) {
-    const records = this.load();
-    const meeting = {
-      id: uuid(),
-      ...data,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    records.unshift(meeting);
-    return this.save(records) ? meeting : null;
-  },
-
-  updateMeeting(id, data) {
-    const records = this.load();
-    const idx = records.findIndex(m => m.id === id);
-    if (idx === -1) return false;
-    records[idx] = { ...records[idx], ...data, updatedAt: new Date().toISOString() };
-    return this.save(records);
-  },
-
-  deleteMeeting(id) {
-    const records = this.load().filter(m => m.id !== id);
-    return this.save(records);
-  },
-
-  exportJSON() {
-    const data = this.load();
+  async exportJSON() {
+    let data;
+    try {
+      data = await Storage.load();
+    } catch {
+      data = [];
+    }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -261,20 +297,26 @@ const Storage = {
   },
 
   importJSON(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = e => {
-        try {
-          const data = JSON.parse(e.target.result);
-          if (!Array.isArray(data)) throw new Error('格式错误');
-          if (this.save(data)) resolve(data.length);
-          else reject(new Error('保存失败'));
-        } catch (err) {
-          reject(new Error('文件格式不正确，请选择正确的 JSON 文件。'));
+    return new Promise(async (resolve, reject) => {
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if (!Array.isArray(data)) throw new Error('格式错误');
+        // Batch import each meeting via the API
+        let successCount = 0;
+        for (const meeting of data) {
+          const { date, topic, notes, participants } = meeting;
+          const res = await fetch('/api/meetings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date, topic, notes, participants })
+          });
+          if (res.ok) successCount++;
         }
-      };
-      reader.onerror = () => reject(new Error('文件读取失败'));
-      reader.readAsText(file);
+        resolve(successCount);
+      } catch (err) {
+        reject(new Error('文件格式不正确，请选择正确的 JSON 文件。'));
+      }
     });
   }
 };
@@ -432,13 +474,20 @@ class MeetingApp {
   }
 
   _bindImportExport() {
-    document.getElementById('btn-export').addEventListener('click', () => {
-      const data = Storage.load();
+    document.getElementById('btn-export').addEventListener('click', async () => {
+      const data = await Storage.load();
       if (data.length === 0) {
         alert('暂无数据可导出。');
         return;
       }
-      Storage.exportJSON();
+      // Trigger download directly from the loaded data
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `组会记录_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
     });
 
     document.getElementById('btn-import').addEventListener('click', () => {
@@ -452,7 +501,7 @@ class MeetingApp {
       try {
         const count = await Storage.importJSON(file);
         alert(`成功导入 ${count} 条组会记录！`);
-        this._route();
+        await this._renderList();
       } catch (err) {
         alert(err.message);
       }
@@ -481,8 +530,13 @@ class MeetingApp {
   }
 
   // ── Dashboard / Meeting List ──────────────────────────────────────────────
-  _renderList() {
-    const records = Storage.load();
+  async _renderList() {
+    let records;
+    try {
+      records = await Storage.load();
+    } catch {
+      records = [];
+    }
 
     document.getElementById('app-root').innerHTML = `
       <div class="dashboard">
@@ -589,8 +643,8 @@ class MeetingApp {
   async _deleteMeeting(id) {
     const ok = await showConfirm('确认删除', '删除后数据无法恢复，确定要删除这条组会记录吗？');
     if (!ok) return;
-    Storage.deleteMeeting(id);
-    this._renderList();
+    await Storage.deleteMeeting(id);
+    await this._renderList();
   }
 
   _renderLiteratureLibrary(records) {
@@ -676,8 +730,8 @@ class MeetingApp {
   }
 
   // ── Meeting Detail ─────────────────────────────────────────────────────────
-  _renderMeetingDetail(id) {
-    const meeting = Storage.getMeeting(id);
+  async _renderMeetingDetail(id) {
+    const meeting = await Storage.getMeeting(id);
     if (!meeting) {
       document.getElementById('app-root').innerHTML = `
         <div class="empty-state" style="padding:80px 0">
@@ -724,7 +778,7 @@ class MeetingApp {
     document.getElementById('detail-delete-btn').addEventListener('click', async () => {
       const ok = await showConfirm('确认删除', '删除后数据无法恢复，确定要删除这条组会记录吗？');
       if (ok) {
-        Storage.deleteMeeting(id);
+        await Storage.deleteMeeting(id);
         location.hash = '#meeting-list';
       }
     });
@@ -826,8 +880,8 @@ class MeetingApp {
   }
 
   // ── Add Literature Form (standalone, no edit mode required) ───────────────
-  _renderAddLiteratureForm(meetingId) {
-    const meeting = Storage.getMeeting(meetingId);
+  async _renderAddLiteratureForm(meetingId) {
+    const meeting = await Storage.getMeeting(meetingId);
     if (!meeting) {
       document.getElementById('app-root').innerHTML = `
         <div class="empty-state" style="padding:80px 0">
@@ -1053,7 +1107,7 @@ class MeetingApp {
     });
   }
 
-  _bindLiteratureFormSubmit(lid, meetingId) {
+  async _bindLiteratureFormSubmit(lid, meetingId) {
     const form = document.getElementById('lit-form');
     const submitBtn = document.getElementById('submit-lit-btn');
 
@@ -1070,8 +1124,8 @@ class MeetingApp {
       submitBtn.textContent = '保存中...';
 
       try {
-        const meeting = Storage.getMeeting(meetingId);
-        const participants = meeting.participants || [];
+        const meeting = await Storage.getMeeting(meetingId);
+        const participants = meeting ? (meeting.participants || []) : [];
 
         let participant = participants.find(p => p.name === authorName);
         if (!participant) {
@@ -1116,7 +1170,7 @@ class MeetingApp {
         }
 
         participant.literature.push(lit);
-        Storage.updateMeeting(meetingId, { ...meeting, participants });
+        await Storage.updateMeeting(meetingId, { ...meeting, participants });
 
         submitBtn.textContent = '已保存！';
         setTimeout(() => { location.hash = `#meeting/${meetingId}`; }, 600);
@@ -1140,8 +1194,8 @@ class MeetingApp {
   }
 
   // ── Meeting Form (Add / Edit) ─────────────────────────────────────────────
-  _renderMeetingForm(editId = null) {
-    const meeting = editId ? Storage.getMeeting(editId) : null;
+  async _renderMeetingForm(editId = null) {
+    const meeting = editId ? await Storage.getMeeting(editId) : null;
 
     document.getElementById('app-root').innerHTML = `
       <a class="back-link" href="${editId ? '#meeting/' + editId : '#meeting-list'}">
@@ -1258,7 +1312,7 @@ class MeetingApp {
             }
           }
         }
-        ok = Storage.updateMeeting(editId, data);
+        ok = await Storage.updateMeeting(editId, data);
         if (ok) location.hash = `#meeting/${editId}`;
       } else {
         const meeting = {
@@ -1267,11 +1321,12 @@ class MeetingApp {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
-        const records = Storage.load();
-        records.unshift(meeting);
-        ok = Storage.save(records);
-        if (ok) location.hash = `#meeting/${targetId}`;
-        else ok = false;
+        const saved = await Storage.addMeeting(meeting);
+        if (saved) {
+          location.hash = `#meeting/${saved.id}`;
+        } else {
+          ok = false;
+        }
       }
 
       if (!ok) {

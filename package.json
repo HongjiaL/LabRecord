@@ -1,0 +1,8 @@
+{
+  "name": "lab-meeting-records",
+  "version": "1.0.0",
+  "description": "实验室组会记录网站",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}
