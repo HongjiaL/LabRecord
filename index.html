@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>实验室组会记录</title>
+  <link rel="stylesheet" href="main.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- ===== Navigation Bar ===== -->
+<nav class="navbar">
+  <a class="navbar-brand" href="#meeting-list">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    <span>实验室组会记录</span>
+  </a>
+  <div class="navbar-actions">
+    <button class="btn btn-ghost btn-sm" id="btn-export" title="导出数据">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      导出
+    </button>
+    <button class="btn btn-ghost btn-sm" id="btn-import" title="导入数据">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      导入
+    </button>
+    <input type="file" id="import-file" accept=".json" style="display:none">
+    <button class="btn btn-primary" id="btn-new-meeting">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      新建组会
+    </button>
+  </div>
+</nav>
+
+<!-- ===== Main Container ===== -->
+<div class="main-container" id="app-root">
+  <!-- Content rendered by JS -->
+</div>
+
+<!-- ===== Confirm Modal Template ===== -->
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-body">
+      <div class="confirm-dialog">
+        <svg class="confirm-dialog-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <h3 id="confirm-title">确认删除</h3>
+        <p id="confirm-message">此操作无法撤销，是否继续？</p>
+        <div class="confirm-dialog-actions">
+          <button class="btn btn-secondary" id="confirm-cancel">取消</button>
+          <button class="btn btn-danger" id="confirm-ok">确认删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
