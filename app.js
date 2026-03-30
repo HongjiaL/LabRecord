@@ -59,7 +59,7 @@ class GitHubRepoStorage {
     this.TOKEN_KEY = 'github_repo_token';
     this.OWNER = 'HongjiaL';
     this.REPO = 'LabRecord';
-    this.BRANCH = 'main';
+    this.BRANCH = 'token';
     this.UPLOAD_DIR = 'uploads';
     this.API_BASE = `https://api.github.com/repos/${this.OWNER}/${this.REPO}/contents`;
   }
@@ -147,7 +147,7 @@ class GitHubRepoStorage {
 
   async downloadFile(fileName, meetingId) {
     const token = this.getToken();
-    if (!token) return null;
+    if (!token) return { ok: false, error: '未设置 GitHub Token' };
 
     const path = `${this.UPLOAD_DIR}/${meetingId}/${fileName}`;
     const url = `${this.API_BASE}/${path}?ref=${this.BRANCH}`;
@@ -158,9 +158,40 @@ class GitHubRepoStorage {
         'X-GitHub-Api-Version': '2022-11-28'
       }
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}`, status: res.status };
+    }
     const data = await res.json();
-    return data.content; // base64 string
+
+    // 小文件（约 ≤1MB）：Contents API 直接返回 base64 content
+    let base64 = (data.content && String(data.content).trim())
+      ? String(data.content).replace(/\s/g, '')
+      : '';
+
+    // 大文件：Contents API 不返回 content，需用 blob SHA 走 Git Blobs API
+    if (!base64 && data.sha) {
+      const blobUrl = `https://api.github.com/repos/${this.OWNER}/${this.REPO}/git/blobs/${data.sha}`;
+      const blobRes = await fetch(blobUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      });
+      if (!blobRes.ok) {
+        return { ok: false, error: `Blob API HTTP ${blobRes.status}` };
+      }
+      const blobData = await blobRes.json();
+      if (blobData.encoding !== 'base64' || !blobData.content) {
+        return { ok: false, error: '无法读取文件二进制内容（Blob API 无 base64）' };
+      }
+      base64 = String(blobData.content).replace(/\s/g, '');
+    }
+
+    if (!base64) {
+      return { ok: false, error: '未获取到文件内容' };
+    }
+    return { ok: true, content: base64 };
   }
 }
 
@@ -700,16 +731,21 @@ class MeetingApp {
       link.textContent = '加载中...';
       link.disabled = true;
       try {
-        const content = await repoStorage.downloadFile(fileName, meetingId);
-        if (content) {
+        const result = await repoStorage.downloadFile(fileName, meetingId);
+        if (result.ok && result.content) {
           const mimeType = _getMimeType(fileName);
-          const dataUrl = `data:${mimeType};base64,${content}`;
+          const binary = atob(result.content);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: mimeType });
+          const objectUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
-          a.href = dataUrl;
+          a.href = objectUrl;
           a.download = fileName;
           a.click();
+          URL.revokeObjectURL(objectUrl);
         } else {
-          alert('无法从 GitHub 加载文件，请检查 Token 是否有效。');
+          alert('无法从 GitHub 加载文件。\n\n' + (result.error || '未知错误'));
         }
       } catch (err) {
         alert('下载失败: ' + err.message);
