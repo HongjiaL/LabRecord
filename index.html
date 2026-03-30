@@ -75,9 +75,9 @@
         <label class="form-label">GitHub Fine-grained PAT</label>
         <input type="password" class="form-input" id="github-token-input" placeholder="github_pat_xxxxxxxxxxxx" autocomplete="off">
         <div class="form-hint">
-          <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener">
-            点击此处生成 Token（Permissions 需勾选 Contents: Read and write）
-          </a>
+        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">
+          点击此处生成 Fine-grained PAT（需勾选 Contents: Read and write，仅限 LabRecord 仓库）
+        </a>
         </div>
       </div>
       <div id="github-status" class="alert" style="display:none"></div>

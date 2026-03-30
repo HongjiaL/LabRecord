@@ -38,14 +38,16 @@
 
 ### GitHub Token 生成步骤
 
-1. 打开 GitHub 设置页面：[github.com/settings/tokens/new](https://github.com/settings/tokens/new)
-2. 选择 **Fine-grained personal access tokens**
-3. **Token name** 填写备注（如 `实验室组会记录网站`）
-4. **Expiration** 选择过期时间（建议 30 天或自定义）
-5. **Repository access** 选择 **Only select repositories**，然后勾选 `HongjiaL/LabRecord`
-6. **Permissions** -> **Contents** 设置为 **Read and write**
-7. 点击 **Generate token**，复制生成的 Token
-8. 在网站导航栏右侧点击 **GitHub** 按钮，粘贴 Token 并点击「测试连接」，确认成功后保存
+1. 打开 GitHub 设置页面：[github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)（注意：不是 classic，要选 **Fine-grained personal access tokens**）
+2. **Token name** 填写备注（如 `实验室组会记录网站`）
+3. **Expiration** 选择过期时间（建议 90 天或自定义）
+4. **Repository access** 选择 **Only select repositories**，然后勾选 `HongjiaL/LabRecord`
+5. **Permissions** 中找到 **Contents**（或搜索 `contents`），设置为 **Read and write**
+
+   > 注意：Contents 这个权限已经覆盖了上传（PUT）和下载（GET）所需的所有操作，不需要额外勾选其他权限。
+
+6. 点击 **Generate token**，复制生成的 Token
+7. 在网站导航栏右侧点击 **GitHub** 按钮，粘贴 Token 并点击「测试连接」，确认成功后保存
 
 > 注意：Token 一旦生成请妥善保管，不要泄露给他人。
 
