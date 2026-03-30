@@ -37,6 +37,135 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function _getMimeType(fileName) {
+  const ext = (fileName || '').split('.').pop().toLowerCase();
+  const map = {
+    'ppt': 'application/vnd.ms-powerpoint',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'pdf': 'application/pdf',
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'pptm': 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+// ─── GitHub Repository Storage ──────────────────────────────────────────────
+class GitHubRepoStorage {
+  constructor() {
+    this.TOKEN_KEY = 'github_repo_token';
+    this.OWNER = 'HongjiaL';
+    this.REPO = 'LabRecord';
+    this.BRANCH = 'main';
+    this.UPLOAD_DIR = 'uploads';
+    this.API_BASE = `https://api.github.com/repos/${this.OWNER}/${this.REPO}/contents`;
+  }
+
+  getToken() { return localStorage.getItem(this.TOKEN_KEY) || null; }
+
+  hasToken() { return !!this.getToken(); }
+
+  setToken(token) { localStorage.setItem(this.TOKEN_KEY, token); }
+
+  removeToken() { localStorage.removeItem(this.TOKEN_KEY); }
+
+  async validateToken(token) {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${this.OWNER}/${this.REPO}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, error: `${res.status} — ${err.message || '无权访问该仓库'}` };
+      }
+      const repo = await res.json();
+      return { ok: true, name: repo.name, description: repo.description || '' };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+
+  async uploadFile(base64Content, fileName, meetingId) {
+    const token = this.getToken();
+    if (!token) throw new Error('未设置 GitHub Token');
+
+    const path = `${this.UPLOAD_DIR}/${meetingId}/${fileName}`;
+    const url = `${this.API_BASE}/${path}`;
+
+    // Check if file already exists to get SHA
+    let sha = null;
+    try {
+      const getRes = await fetch(`${url}?ref=${this.BRANCH}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json'
+        }
+      });
+      if (getRes.ok) {
+        const data = await getRes.json();
+        sha = data.sha;
+      }
+    } catch (_) { /* ignore — file doesn't exist yet */ }
+
+    const body = {
+      message: `Upload: ${fileName} (meeting: ${meetingId})`,
+      content: base64Content,
+      branch: this.BRANCH
+    };
+    if (sha) body.sha = sha;
+
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`上传失败: ${res.status} — ${err.message || ''}`);
+    }
+
+    const data = await res.json();
+    return {
+      sha: data.content.sha,
+      path: data.content.path,
+      downloadUrl: data.content.download_url
+    };
+  }
+
+  async downloadFile(fileName, meetingId) {
+    const token = this.getToken();
+    if (!token) return null;
+
+    const path = `${this.UPLOAD_DIR}/${meetingId}/${fileName}`;
+    const url = `${this.API_BASE}/${path}?ref=${this.BRANCH}`;
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.content; // base64 string
+  }
+}
+
+const repoStorage = new GitHubRepoStorage();
+
 // ─── Storage ───────────────────────────────────────────────────────────────
 const Storage = {
   KEY: 'labMeetingRecords',
@@ -190,6 +319,84 @@ class MeetingApp {
   _bindNav() {
     document.getElementById('btn-new-meeting').addEventListener('click', () => {
       location.hash = '#new-meeting';
+    });
+
+    // GitHub Settings Modal
+    const modal = document.getElementById('github-settings-modal');
+    const tokenInput = document.getElementById('github-token-input');
+    const statusDiv = document.getElementById('github-status');
+    const saveBtn = document.getElementById('github-save-btn');
+    const testBtn = document.getElementById('github-test-btn');
+    const removeBtn = document.getElementById('github-remove-btn');
+
+    const showStatus = (msg, type) => {
+      statusDiv.style.display = 'flex';
+      statusDiv.className = `alert alert-${type}`;
+      statusDiv.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>${msg}</span>`;
+    };
+    const hideStatus = () => { statusDiv.style.display = 'none'; };
+
+    const openModal = () => {
+      hideStatus();
+      if (repoStorage.hasToken()) {
+        tokenInput.value = '\u2022'.repeat(18);
+        removeBtn.style.display = '';
+        saveBtn.textContent = '更新 Token';
+        testBtn.style.display = 'none';
+      } else {
+        tokenInput.value = '';
+        removeBtn.style.display = 'none';
+        saveBtn.textContent = '保存 Token';
+        testBtn.style.display = '';
+      }
+      modal.classList.add('active');
+    };
+
+    const closeModal = () => modal.classList.remove('active');
+
+    document.getElementById('btn-github-settings').addEventListener('click', openModal);
+    document.getElementById('github-settings-close').addEventListener('click', closeModal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+    saveBtn.addEventListener('click', () => {
+      const token = tokenInput.value.trim();
+      if (!token || token === '\u2022'.repeat(18)) {
+        showStatus('请输入有效的 Token', 'warning');
+        return;
+      }
+      repoStorage.setToken(token);
+      showStatus('Token 已保存', 'success');
+      removeBtn.style.display = '';
+      saveBtn.textContent = '更新 Token';
+      testBtn.style.display = 'none';
+    });
+
+    testBtn.addEventListener('click', async () => {
+      const token = tokenInput.value.trim();
+      if (!token) { showStatus('请输入 Token', 'warning'); return; }
+      testBtn.disabled = true;
+      testBtn.textContent = '测试中...';
+      const result = await repoStorage.validateToken(token);
+      if (result.ok) {
+        showStatus(`连接成功！仓库: <strong>${escapeHtml(result.name)}</strong>`, 'success');
+        repoStorage.setToken(token);
+        removeBtn.style.display = '';
+        saveBtn.textContent = '更新 Token';
+        testBtn.style.display = 'none';
+      } else {
+        showStatus(`连接失败: ${result.error}`, 'warning');
+      }
+      testBtn.disabled = false;
+      testBtn.textContent = '测试连接';
+    });
+
+    removeBtn.addEventListener('click', () => {
+      repoStorage.removeToken();
+      tokenInput.value = '';
+      removeBtn.style.display = 'none';
+      saveBtn.textContent = '保存 Token';
+      testBtn.style.display = '';
+      showStatus('Token 已移除', 'warning');
     });
   }
 
@@ -482,10 +689,60 @@ class MeetingApp {
         location.hash = '#meeting-list';
       }
     });
+
+    // GitHub repo file download click handler
+    document.getElementById('app-root').addEventListener('click', async (e) => {
+      const link = e.target.closest('.repo-download');
+      if (!link) return;
+      e.preventDefault();
+      const meetingId = link.dataset.meeting;
+      const fileName = link.dataset.file;
+      link.textContent = '加载中...';
+      link.disabled = true;
+      try {
+        const content = await repoStorage.downloadFile(fileName, meetingId);
+        if (content) {
+          const mimeType = _getMimeType(fileName);
+          const dataUrl = `data:${mimeType};base64,${content}`;
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = fileName;
+          a.click();
+        } else {
+          alert('无法从 GitHub 加载文件，请检查 Token 是否有效。');
+        }
+      } catch (err) {
+        alert('下载失败: ' + err.message);
+      }
+      link.disabled = false;
+      link.textContent = `${Icon.paperclip} 下载PPT`;
+    });
   }
 
   _renderParticipantCard(participant, meetingId) {
     const literature = participant.literature || [];
+
+    const renderPptDownload = (lit) => {
+      if (!lit.pptDataUrl) return '';
+
+      const raw = lit.pptDataUrl;
+
+      if (raw.startsWith('local:')) {
+        // Local base64 storage — reconstruct data URL directly
+        const content = raw.slice(6);
+        const mimeType = _getMimeType(lit.pptFileName);
+        const dataUrl = `data:${mimeType};base64,${content}`;
+        return `<a href="${dataUrl}" download="${escapeHtml(lit.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+      }
+
+      if (raw.startsWith('repo:')) {
+        // GitHub repo storage — dynamic download via API
+        return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(lit.pptFileName || '')}">${Icon.paperclip} 下载PPT</a>`;
+      }
+
+      // Old format (direct data URL) — backward compatibility
+      return `<a href="${escapeHtml(raw)}" download="${escapeHtml(lit.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+    };
 
     return `
       <div class="participant-detail-card fade-in">
@@ -509,7 +766,7 @@ class MeetingApp {
               <div class="literature-detail-actions">
                 ${lit.link ? `<a href="${escapeHtml(lit.link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.arrowRight} 访问链接</a>` : ''}
                 ${lit.doi ? `<a href="https://doi.org/${escapeHtml(lit.doi)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.fileText} DOI</a>` : ''}
-                ${lit.pptDataUrl ? `<a href="${lit.pptDataUrl}" download="${escapeHtml(lit.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>` : ''}
+                ${renderPptDownload(lit)}
               </div>
 
               ${lit.transcript && lit.transcript.trim() ? `
@@ -599,18 +856,69 @@ class MeetingApp {
       this._addParticipantBlock(participantsContainer, null);
     });
 
-    // Form submit
-    document.getElementById('meeting-form').addEventListener('submit', e => {
+    // Form submit — upload pending files to GitHub before saving
+    document.getElementById('meeting-form').addEventListener('submit', async e => {
       e.preventDefault();
+      const submitBtn = document.getElementById('form-submit-btn');
+      const originalText = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `${Icon.upload} 上传文件中...`;
+
+      // Pre-generate meeting ID for new meetings (so uploads use the real ID)
+      let targetId = editId || uuid();
+
       const data = this._collectFormData();
+
+      // Upload pending files to GitHub
+      if (repoStorage.hasToken()) {
+        for (const p of (data.participants || [])) {
+          for (const l of (p.literature || [])) {
+            if (l.pptDataUrl && l.pptDataUrl.startsWith('pending:')) {
+              const base64Content = l.pptDataUrl.slice(8); // remove 'pending:' prefix
+              if (!base64Content) continue;
+              try {
+                const result = await repoStorage.uploadFile(base64Content, l.pptFileName, targetId);
+                l.pptDataUrl = `repo:${result.sha}`;
+              } catch (err) {
+                // Fallback to local storage on failure
+                l.pptDataUrl = `local:${base64Content}`;
+              }
+            }
+          }
+        }
+      }
+
       let ok;
       if (editId) {
+        // For existing meetings: re-upload files that are already repo: (need new SHA each time)
+        if (repoStorage.hasToken()) {
+          for (const p of (data.participants || [])) {
+            for (const l of (p.literature || [])) {
+              if (l.pptDataUrl && l.pptDataUrl.startsWith('repo:')) {
+                const base64Content = l.pptDataUrl.slice(5); // not present in repo: format — skip
+              }
+            }
+          }
+        }
         ok = Storage.updateMeeting(editId, data);
         if (ok) location.hash = `#meeting/${editId}`;
       } else {
-        const saved = Storage.addMeeting(data);
-        if (saved) location.hash = `#meeting/${saved.id}`;
+        const meeting = {
+          id: targetId,
+          ...data,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        const records = Storage.load();
+        records.unshift(meeting);
+        ok = Storage.save(records);
+        if (ok) location.hash = `#meeting/${targetId}`;
         else ok = false;
+      }
+
+      if (!ok) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
       }
     });
   }
@@ -715,6 +1023,7 @@ class MeetingApp {
           <span class="file-uploaded-name" id="uploaded-name-${lid}">${escapeHtml(existing ? existing.pptFileName : '')}</span>
           <button type="button" class="btn btn-ghost btn-sm" id="remove-ppt-${lid}" style="padding:2px 6px;color:var(--danger)">${Icon.x}</button>
         </div>
+        <div class="upload-status" id="upload-status-${lid}" style="display:none"></div>
         <input type="hidden" name="ppt-data-${lid}" id="ppt-data-${lid}" value="${escapeHtml(existing ? existing.pptDataUrl : '')}">
         <input type="hidden" name="ppt-name-${lid}" id="ppt-name-${lid}" value="${escapeHtml(existing ? existing.pptFileName : '')}">
       </div>
@@ -769,21 +1078,49 @@ class MeetingApp {
     const pptData = block.querySelector(`#ppt-data-${lid}`);
     const pptName = block.querySelector(`#ppt-name-${lid}`);
     const removePptBtn = block.querySelector(`#remove-ppt-${lid}`);
+    const statusDiv = block.querySelector(`#upload-status-${lid}`);
 
-    const handleFile = (file) => {
+    const showUploadStatus = (msg, type) => {
+      statusDiv.className = `upload-status ${type}`;
+      statusDiv.innerHTML = msg;
+      statusDiv.style.display = 'flex';
+    };
+    const hideUploadStatus = () => { statusDiv.style.display = 'none'; };
+
+    const handleFile = async (file) => {
       if (!file) return;
-      if (file.size > 10 * 1024 * 1024) {
-        alert('文件过大（超过 10MB），可能导致存储失败。建议压缩或转 PDF。');
+      if (file.size > 50 * 1024 * 1024) {
+        alert('文件过大（超过 50MB），建议压缩或转 PDF。');
+        return;
       }
+      showUploadStatus(`${Icon.upload} 正在读取文件...`, 'loading');
+
       const reader = new FileReader();
-      reader.onload = ev => {
-        pptData.value = ev.target.result;
-        pptName.value = file.name;
+      reader.onload = (ev) => {
+        const fullDataUrl = ev.target.result;
+        const base64Content = fullDataUrl.split(',')[1];
+
+        if (repoStorage.hasToken()) {
+          // Deferred upload: store base64 locally, upload on form submit with real meetingId
+          showUploadStatus(`${Icon.upload} 文件已准备好，将在保存时上传到 GitHub`, 'success');
+          // Store as pending: prefix indicates upload is queued
+          pptData.value = `pending:${base64Content}`;
+          pptName.value = file.name;
+        } else {
+          // No token, use local base64 storage
+          showUploadStatus(`${Icon.info} 使用本地存储（建议设置 GitHub 仓库以突破容量限制）`, 'warning');
+          pptData.value = `local:${base64Content}`;
+          pptName.value = file.name;
+        }
+
         uploadedName.textContent = file.name;
         uploadArea.style.display = 'none';
         uploadedDiv.style.display = 'flex';
       };
-      reader.onerror = () => alert('文件读取失败');
+      reader.onerror = () => {
+        showUploadStatus('文件读取失败', 'error');
+        alert('文件读取失败');
+      };
       reader.readAsDataURL(file);
     };
 
@@ -825,6 +1162,15 @@ class MeetingApp {
         const kwTags = lb.querySelectorAll(`#kw-tags-${lid} .keyword-tag`);
         const keywords = [...kwTags].map(t => t.dataset.kw).filter(Boolean);
 
+        const pptDataUrl = lb.querySelector(`[name="ppt-data-${lid}"]`).value;
+        // Normalize old format (data:...;base64,...) to local: prefix
+        let normalized = pptDataUrl;
+        if (pptDataUrl && !pptDataUrl.startsWith('local:') && !pptDataUrl.startsWith('repo:') && !pptDataUrl.startsWith('pending:')) {
+          if (pptDataUrl.includes(',')) {
+            normalized = `local:${pptDataUrl.split(',')[1]}`;
+          }
+        }
+
         literature.push({
           id: lid,
           title,
@@ -833,7 +1179,7 @@ class MeetingApp {
           doi: lb.querySelector(`[name="lit-doi-${lid}"]`).value.trim(),
           link: lb.querySelector(`[name="lit-link-${lid}"]`).value.trim(),
           keywords,
-          pptDataUrl: lb.querySelector(`[name="ppt-data-${lid}"]`).value,
+          pptDataUrl: normalized,
           pptFileName: lb.querySelector(`[name="ppt-name-${lid}"]`).value,
           transcript: lb.querySelector(`[name="lit-transcript-${lid}"]`).value.trim()
         });

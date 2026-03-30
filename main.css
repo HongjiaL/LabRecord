@@ -985,6 +985,41 @@ a:hover { color: var(--accent); }
 }
 
 /* ===== Responsive ===== */
+/* ===== Upload Status ===== */
+.upload-status {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.upload-status.success {
+  background: #F0FFF4;
+  color: #276749;
+  border: 1px solid #9AE6B4;
+}
+
+.upload-status.warning {
+  background: #FFFAF0;
+  color: #92400E;
+  border: 1px solid #FCD34D;
+}
+
+.upload-status.loading {
+  background: #EBF8FF;
+  color: #2B6CB0;
+  border: 1px solid #BEE3F8;
+}
+
+.upload-status.error {
+  background: #FFF5F5;
+  color: #C53030;
+  border: 1px solid #FEB2B2;
+}
+
 @media (max-width: 600px) {
   .main-container { padding: 20px 16px; }
   .navbar { padding: 0 16px; }
