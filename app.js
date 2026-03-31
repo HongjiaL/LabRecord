@@ -68,7 +68,10 @@ const FileAPI = {
     // Step 1：拿临时凭证
     const meta = await fetch('/api/files/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-App-Password': sessionStorage.getItem('appPassword') || ''
+      },
       body: JSON.stringify({ fileName, meetingId })
     }).then(r => {
       if (!r.ok) {
@@ -156,7 +159,10 @@ const Storage = {
     try {
       const res = await fetch('/api/meetings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-App-Password': sessionStorage.getItem('appPassword') || ''
+        },
         body: JSON.stringify(data)
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -172,7 +178,10 @@ const Storage = {
     try {
       const res = await fetch(`/api/meetings/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-App-Password': sessionStorage.getItem('appPassword') || ''
+        },
         body: JSON.stringify(data)
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -186,7 +195,10 @@ const Storage = {
 
   async deleteMeeting(id) {
     try {
-      const res = await fetch(`/api/meetings/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/meetings/${id}`, {
+        method: 'DELETE',
+        headers: { 'X-App-Password': sessionStorage.getItem('appPassword') || '' }
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return true;
     } catch (e) {
@@ -266,6 +278,55 @@ const confirmTitle = document.getElementById('confirm-title');
 const confirmMessage = document.getElementById('confirm-message');
 const confirmCancel = document.getElementById('confirm-cancel');
 const confirmOk = document.getElementById('confirm-ok');
+
+// ─── Password Modal ────────────────────────────────────────────────────────
+let _passwordResolve = null;
+const passwordModal = document.getElementById('password-modal');
+const passwordInput = document.getElementById('password-input');
+const passwordError = document.getElementById('password-error');
+const passwordSubmit = document.getElementById('password-submit');
+
+function showPasswordModal() {
+  return new Promise(resolve => {
+    passwordError.style.display = 'none';
+    passwordInput.value = '';
+    passwordInput.focus();
+    passwordModal.classList.add('active');
+    _passwordResolve = resolve;
+  });
+}
+
+function hidePasswordModal() {
+  passwordModal.classList.remove('active');
+  _passwordResolve = null;
+}
+
+passwordSubmit.addEventListener('click', () => {
+  const pw = passwordInput.value;
+  if (!pw) {
+    passwordError.textContent = '请输入密码';
+    passwordError.style.display = 'block';
+    return;
+  }
+  sessionStorage.setItem('appPassword', pw);
+  hidePasswordModal();
+  if (_passwordResolve) _passwordResolve(pw);
+  _passwordResolve = null;
+});
+
+passwordInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    passwordSubmit.click();
+  }
+});
+
+passwordModal.addEventListener('click', e => {
+  if (e.target === passwordModal) {
+    if (_passwordResolve) _passwordResolve(null);
+    _passwordResolve = null;
+    hidePasswordModal();
+  }
+});
 
 function showConfirm(title, message) {
   return new Promise(resolve => {
@@ -481,6 +542,11 @@ class MeetingApp {
   async _deleteMeeting(id) {
     const ok = await showConfirm('确认删除', '删除后数据无法恢复，确定要删除这条组会记录吗？');
     if (!ok) return;
+    const pw = sessionStorage.getItem('appPassword');
+    if (!pw) {
+      const entered = await showPasswordModal();
+      if (!entered) return;
+    }
     await Storage.deleteMeeting(id);
     await this._renderList();
   }
@@ -614,10 +680,14 @@ class MeetingApp {
 
     document.getElementById('detail-delete-btn').addEventListener('click', async () => {
       const ok = await showConfirm('确认删除', '删除后数据无法恢复，确定要删除这条组会记录吗？');
-      if (ok) {
-        await Storage.deleteMeeting(id);
-        location.hash = '#meeting-list';
+      if (!ok) return;
+      const pw = sessionStorage.getItem('appPassword');
+      if (!pw) {
+        const entered = await showPasswordModal();
+        if (!entered) return;
       }
+      await Storage.deleteMeeting(id);
+      location.hash = '#meeting-list';
     });
 
     // GitHub repo file download click handler
@@ -926,6 +996,12 @@ class MeetingApp {
       if (!authorName) { alert('请输入姓名'); return; }
       if (!title) { alert('请输入文献标题'); return; }
 
+      const pw = sessionStorage.getItem('appPassword');
+      if (!pw) {
+        const entered = await showPasswordModal();
+        if (!entered) return;
+      }
+
       submitBtn.disabled = true;
       submitBtn.textContent = '保存中...';
 
@@ -1046,6 +1122,13 @@ class MeetingApp {
     document.getElementById('meeting-form').addEventListener('submit', async e => {
       e.preventDefault();
       const submitBtn = document.getElementById('form-submit-btn');
+
+      const pw = sessionStorage.getItem('appPassword');
+      if (!pw) {
+        const entered = await showPasswordModal();
+        if (!entered) return;
+      }
+
       const originalText = submitBtn.innerHTML;
       submitBtn.disabled = true;
       submitBtn.innerHTML = `${Icon.upload} 上传文件中...`;

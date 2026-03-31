@@ -7,16 +7,21 @@
  *
  * 若创建临时 Token 失败（如 Token 类型不支持），返回 501，前端降级为 local: 存储。
  */
+import { checkAppPassword } from '../../api/_auth.js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-App-Password');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  const authError = checkAppPassword(req);
+  if (authError) return res.status(authError.status).json(authError.body);
 
   const { fileName, meetingId } = req.body || {};
 

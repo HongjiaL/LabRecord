@@ -1,10 +1,11 @@
 import { supabase } from '../../../supabase.js';
+import { checkAppPassword } from '../../../api/_auth.js';
 
 export default async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-App-Password');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -20,10 +21,14 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'PUT') {
+    const authError = checkAppPassword(req);
+    if (authError) return res.status(authError.status).json(authError.body);
     return handleUpdateMeeting(req, res, id);
   }
 
   if (req.method === 'DELETE') {
+    const authError = checkAppPassword(req);
+    if (authError) return res.status(authError.status).json(authError.body);
     return handleDeleteMeeting(req, res, id);
   }
 
