@@ -635,12 +635,51 @@ class MeetingApp {
       const ok = await showConfirm('确认删除', '删除后数据无法恢复，确定要删除这条组会记录吗？');
       if (!ok) return;
       const pw = sessionStorage.getItem('appPassword');
-      if (!pw) {
-        const entered = await showPasswordModal();
-        if (!entered) return;
-      }
       await Storage.deleteMeeting(id);
       location.hash = '#meeting-list';
+    });
+
+    // Delegate: download PPT button in participant card header
+    document.getElementById('app-root').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.ppt-download-btn');
+      if (!btn) return;
+      const name = btn.dataset.name;
+      const meeting = await Storage.getMeeting(id);
+      const participant = (meeting.participants || []).find(p => p.name === name);
+      const lit = (participant?.literature || []).find(l => l.pptDataUrl);
+      if (!lit) { alert('未找到关联的 PPT 文件'); return; }
+      const raw = lit.pptDataUrl;
+      if (raw.startsWith('repo:')) {
+        const btn_el = btn;
+        btn_el.textContent = '下载中...';
+        btn_el.disabled = true;
+        try {
+          const result = await FileAPI.download(raw.slice(5), lit.pptFileName);
+          if (result.objectUrl) {
+            const a = document.createElement('a');
+            a.href = result.objectUrl;
+            a.download = lit.pptFileName || 'PPT文件';
+            a.click();
+            URL.revokeObjectURL(result.objectUrl);
+          } else {
+            alert('文件下载失败。\n\n' + (result.error || '未知错误'));
+          }
+        } catch (err) { alert('下载失败: ' + err.message); }
+        btn_el.disabled = false;
+        btn_el.textContent = Icon.paperclip + ' 下载PPT';
+      } else if (raw.startsWith('local:')) {
+        const mimeType = _getMimeType(lit.pptFileName);
+        const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = lit.pptFileName || 'PPT文件';
+        a.click();
+      } else {
+        const a = document.createElement('a');
+        a.href = raw;
+        a.download = lit.pptFileName || 'PPT文件';
+        a.click();
+      }
     });
 
     document.getElementById('app-root').addEventListener('click', async (e) => {
@@ -679,20 +718,8 @@ class MeetingApp {
   _renderParticipantCard(participant, meetingId) {
     const literature = participant.literature || [];
 
-      const pptBtn = (() => {
-      const raw = participant.pptDataUrl;
-      if (!raw) return '';
-      const label = Icon.paperclip + ' 下载PPT';
-      if (raw.startsWith('local:')) {
-        const mimeType = _getMimeType(participant.pptFileName);
-        const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
-        return `<a href="${dataUrl}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
-      }
-      if (raw.startsWith('repo:')) {
-        return `<a href="#" class="ppt-download-btn repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(participant.pptFileName || '')}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
-      }
-      return `<a href="${escapeHtml(raw)}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
-    })();
+      // Check if this participant has any literature with a PPT attached
+    const litWithPpt = literature.some(lit => lit.pptDataUrl);
 
     return `
       <div class="participant-detail-card fade-in">
@@ -700,7 +727,7 @@ class MeetingApp {
           <h3>${Icon.users} ${escapeHtml(participant.name || '未命名成员')}</h3>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-size:0.875rem;color:var(--text-muted)">${literature.length} 篇文献</span>
-            ${pptBtn}
+            ${litWithPpt ? `<button class="ppt-download-btn" data-name="${escapeHtml(participant.name || '')}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;border:none;cursor:pointer;white-space:nowrap">${Icon.paperclip} 下载PPT</button>` : ''}
           </div>
         </div>
         <div class="participant-detail-body">
