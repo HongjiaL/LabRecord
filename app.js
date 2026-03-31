@@ -650,23 +650,28 @@ class MeetingApp {
       if (!lit) { alert('未找到关联的 PPT 文件'); return; }
       const raw = lit.pptDataUrl;
       if (raw.startsWith('repo:')) {
-        const btn_el = btn;
-        btn_el.textContent = '下载中...';
-        btn_el.disabled = true;
+        btn.textContent = '下载中...';
+        btn.disabled = true;
         try {
-          const result = await FileAPI.download(raw.slice(5), lit.pptFileName);
-          if (result.objectUrl) {
+          const result = await FileAPI.download(lit.pptFileName, id);
+          if (result.ok && result.content) {
+            const mimeType = _getMimeType(lit.pptFileName);
+            const binary = atob(result.content);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes], { type: mimeType });
+            const objectUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = result.objectUrl;
-            a.download = lit.pptFileName || 'PPT文件';
+            a.href = objectUrl;
+            a.download = lit.pptFileName;
             a.click();
-            URL.revokeObjectURL(result.objectUrl);
+            URL.revokeObjectURL(objectUrl);
           } else {
             alert('文件下载失败。\n\n' + (result.error || '未知错误'));
           }
         } catch (err) { alert('下载失败: ' + err.message); }
-        btn_el.disabled = false;
-        btn_el.textContent = Icon.paperclip + ' 下载PPT';
+        btn.disabled = false;
+        btn.textContent = Icon.paperclip + ' 下载PPT';
       } else if (raw.startsWith('local:')) {
         const mimeType = _getMimeType(lit.pptFileName);
         const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
@@ -840,7 +845,7 @@ class MeetingApp {
       const matched = existingParticipants.find(p => p.name === name && p.pptDataUrl);
       if (matched) {
         const btn = _pptDownloadBtn(matched.pptDataUrl, matched.pptFileName || 'PPT文件', meetingId);
-        existingPptEl.innerHTML = `<div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">该成员已有 PPT：${btn}</div>`;
+        existingPptEl.innerHTML = `<div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">该成员已有 PPT：${btn.replace('background:rgba(255,255,255,0.2)', 'background:var(--accent)').replace('color:#fff', 'color:#fff')}</div>`;
         existingPptEl.style.display = '';
       } else {
         existingPptEl.style.display = 'none';
