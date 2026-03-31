@@ -40,15 +40,16 @@ function escapeHtml(str) {
 // ─── PPT Download Button Helper ────────────────────────────────────────────
 function _pptDownloadBtn(raw, fileName, meetingId) {
   if (!raw) return '';
+  const label = Icon.paperclip + ' 下载PPT';
   if (raw.startsWith('local:')) {
     const mimeType = _getMimeType(fileName);
     const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
-    return `<a href="${dataUrl}" download="${escapeHtml(fileName)}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+    return `<a href="${dataUrl}" download="${escapeHtml(fileName)}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
   }
   if (raw.startsWith('repo:')) {
-    return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(fileName)}">${Icon.paperclip} 下载PPT</a>`;
+    return `<a href="#" class="ppt-download-btn repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(fileName)}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
   }
-  return `<a href="${escapeHtml(raw)}" download="${escapeHtml(fileName)}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+  return `<a href="${escapeHtml(raw)}" download="${escapeHtml(fileName)}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
 }
 
 // ─── MIME Type ─────────────────────────────────────────────────────────────
@@ -678,18 +679,19 @@ class MeetingApp {
   _renderParticipantCard(participant, meetingId) {
     const literature = participant.literature || [];
 
-    const pptBtn = (() => {
+      const pptBtn = (() => {
       const raw = participant.pptDataUrl;
       if (!raw) return '';
+      const label = Icon.paperclip + ' 下载PPT';
       if (raw.startsWith('local:')) {
         const mimeType = _getMimeType(participant.pptFileName);
         const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
-        return `<a href="${dataUrl}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+        return `<a href="${dataUrl}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
       }
       if (raw.startsWith('repo:')) {
-        return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(participant.pptFileName || '')}">${Icon.paperclip} 下载PPT</a>`;
+        return `<a href="#" class="ppt-download-btn repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(participant.pptFileName || '')}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
       }
-      return `<a href="${escapeHtml(raw)}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+      return `<a href="${escapeHtml(raw)}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
     })();
 
     return `
