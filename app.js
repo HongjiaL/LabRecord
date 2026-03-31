@@ -37,6 +37,20 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ─── PPT Download Button Helper ────────────────────────────────────────────
+function _pptDownloadBtn(raw, fileName, meetingId) {
+  if (!raw) return '';
+  if (raw.startsWith('local:')) {
+    const mimeType = _getMimeType(fileName);
+    const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
+    return `<a href="${dataUrl}" download="${escapeHtml(fileName)}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+  }
+  if (raw.startsWith('repo:')) {
+    return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(fileName)}">${Icon.paperclip} 下载PPT</a>`;
+  }
+  return `<a href="${escapeHtml(raw)}" download="${escapeHtml(fileName)}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+}
+
 // ─── MIME Type ─────────────────────────────────────────────────────────────
 function _getMimeType(fileName) {
   const ext = (fileName || '').split('.').pop().toLowerCase();
@@ -739,6 +753,7 @@ class MeetingApp {
                   <datalist id="lf-authors-${pid}">
                     ${existingParticipants.map(p => `<option value="${escapeHtml(p.name)}">`).join('')}
                   </datalist>
+                  <div id="lf-existing-ppt-${pid}" style="margin-top:6px;display:none"></div>
                 </div>
               </div>
               <div class="form-group" style="margin-top:14px">
@@ -787,6 +802,22 @@ class MeetingApp {
       this._addLitRow(pid, 'lr' + n, null);
     });
     this._bindLitFormSubmit(pid, meetingId);
+
+    // 当用户选择了已有成员时，显示其已有 PPT 的下载入口
+    const authorInput = document.getElementById(`lf-author-${pid}`);
+    const existingPptEl = document.getElementById(`lf-existing-ppt-${pid}`);
+    authorInput.addEventListener('input', () => {
+      const name = authorInput.value.trim();
+      const matched = existingParticipants.find(p => p.name === name && p.pptDataUrl);
+      if (matched) {
+        const btn = _pptDownloadBtn(matched.pptDataUrl, matched.pptFileName || 'PPT文件', meetingId);
+        existingPptEl.innerHTML = `<div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">该成员已有 PPT：${btn}</div>`;
+        existingPptEl.style.display = '';
+      } else {
+        existingPptEl.style.display = 'none';
+        existingPptEl.innerHTML = '';
+      }
+    });
   }
 
   _bindLitFormPpt(pid) {
