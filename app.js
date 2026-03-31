@@ -753,11 +753,13 @@ class MeetingApp {
                 <div id="lf-ppt-done-${pid}" class="file-uploaded" style="display:none">
                   ${Icon.check}
                   <span class="file-uploaded-name" id="lf-ppt-name-${pid}"></span>
+                  <button type="button" id="lf-ppt-dl-${pid}" title="下载此文件" style="padding:2px 6px;color:var(--accent);background:none;border:none;cursor:pointer">${Icon.paperclip}</button>
                   <button type="button" id="lf-ppt-rm-${pid}" style="padding:2px 6px;color:var(--danger);background:none;border:none;cursor:pointer">${Icon.x}</button>
                 </div>
                 <div class="upload-status" id="lf-ppt-status-${pid}" style="display:none"></div>
                 <input type="hidden" id="lf-ppt-data-${pid}" value="">
                 <input type="hidden" id="lf-ppt-name2-${pid}" value="">
+                <input type="hidden" id="lf-meeting-id-${pid}" value="${meetingId}">
               </div>
             </div>
 
@@ -829,6 +831,60 @@ class MeetingApp {
     rmBtn.addEventListener('click', () => {
       dataEl.value = ''; name2El.value = ''; fileInput.value = '';
       area.style.display = ''; done.style.display = 'none'; statusEl.style.display = 'none';
+    });
+
+    const dlBtn = document.getElementById(`lf-ppt-dl-${pid}`);
+    dlBtn.addEventListener('click', async () => {
+      const raw = dataEl.value;
+      if (!raw) return;
+      const fileName = name2El.value || 'PPT文件';
+      if (raw.startsWith('pending:')) {
+        const b64 = raw.slice(8);
+        if (b64.length > MAX_LOCAL_FALLBACK_B64_CHARS) {
+          alert('文件过大，无法直接下载。保存后可在组会详情页下载。');
+          return;
+        }
+        const mimeType = _getMimeType(fileName);
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fileName; a.click();
+        URL.revokeObjectURL(url);
+      } else if (raw.startsWith('repo:')) {
+        const sha = raw.slice(5);
+        dlBtn.textContent = '...'; dlBtn.disabled = true;
+        try {
+          const result = await FileAPI.download(fileName, document.getElementById(`lf-meeting-id-${pid}`)?.value || '');
+          if (result.ok && result.content) {
+            const mimeType = _getMimeType(fileName);
+            const binary = atob(result.content);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = fileName; a.click();
+            URL.revokeObjectURL(url);
+          } else {
+            alert('下载失败: ' + (result.error || '未知错误'));
+          }
+        } catch (err) { alert('下载失败: ' + err.message); }
+        finally { dlBtn.textContent = Icon.paperclip; dlBtn.disabled = false; }
+      } else if (raw.startsWith('local:')) {
+        const b64 = raw.slice(6);
+        const mimeType = _getMimeType(fileName);
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fileName; a.click();
+        URL.revokeObjectURL(url);
+      }
     });
   }
 
