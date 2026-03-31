@@ -505,7 +505,6 @@ class MeetingApp {
             ${lit.authors ? `<span>${escapeHtml(lit.authors)}</span>` : ''}
             ${lit.journal ? `<span>${escapeHtml(lit.journal)}</span>` : ''}
             <span class="literature-item-badge">${Icon.calendar} ${formatDate(lit.meetingDate)}</span>
-            ${lit.pptFileName ? `<span class="literature-item-badge">${Icon.paperclip} PPT</span>` : ''}
           </div>
           ${lit.keywords && lit.keywords.length > 0 ? `
             <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px">
@@ -658,33 +657,31 @@ class MeetingApp {
   _renderParticipantCard(participant, meetingId) {
     const literature = participant.literature || [];
 
-    const renderPptDownload = (lit) => {
-      if (!lit.pptDataUrl) return '';
-
-      const raw = lit.pptDataUrl;
-
+    // 参与者级别 PPT 下载按钮
+    const pptBtn = (() => {
+      const raw = participant.pptDataUrl;
+      if (!raw) return '';
       if (raw.startsWith('local:')) {
-        // Local base64 storage — reconstruct data URL directly
         const content = raw.slice(6);
-        const mimeType = _getMimeType(lit.pptFileName);
+        const mimeType = _getMimeType(participant.pptFileName);
         const dataUrl = `data:${mimeType};base64,${content}`;
-        return `<a href="${dataUrl}" download="${escapeHtml(lit.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+        return `<a href="${dataUrl}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
       }
-
       if (raw.startsWith('repo:')) {
-        // GitHub repo storage — dynamic download via API
-        return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(lit.pptFileName || '')}">${Icon.paperclip} 下载PPT</a>`;
+        return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(participant.pptFileName || '')}">${Icon.paperclip} 下载PPT</a>`;
       }
-
-      // Old format (direct data URL) — backward compatibility
-      return `<a href="${escapeHtml(raw)}" download="${escapeHtml(lit.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
-    };
+      // Old format backward compat
+      return `<a href="${escapeHtml(raw)}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+    })();
 
     return `
       <div class="participant-detail-card fade-in">
         <div class="participant-detail-header">
           <h3>${Icon.users} ${escapeHtml(participant.name || '未命名成员')}</h3>
-          <span>${literature.length} 篇文献</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:0.875rem;color:var(--text-muted)">${literature.length} 篇文献</span>
+            ${pptBtn}
+          </div>
         </div>
         <div class="participant-detail-body">
           ${literature.length === 0 ? `
@@ -702,7 +699,6 @@ class MeetingApp {
               <div class="literature-detail-actions">
                 ${lit.link ? `<a href="${escapeHtml(lit.link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.arrowRight} 访问链接</a>` : ''}
                 ${lit.doi ? `<a href="https://doi.org/${escapeHtml(lit.doi)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.fileText} DOI</a>` : ''}
-                ${renderPptDownload(lit)}
               </div>
 
               ${lit.transcript && lit.transcript.trim() ? `
@@ -795,27 +791,6 @@ class MeetingApp {
               </div>
             </div>
 
-            <!-- PPT Upload -->
-            <div class="form-section">
-              <div class="form-section-title">PPT / 演示文件（可选）</div>
-              <div class="file-upload-area" id="upload-area-${lid}">
-                <input type="file" id="ppt-file-${lid}" accept=".ppt,.pptx,.pdf,.png,.jpg,.jpeg,.gif,.webp,.pptm">
-                <div class="file-upload-icon">${Icon.upload}</div>
-                <div class="file-upload-text">
-                  <strong>点击选择</strong> 或拖拽文件到此处<br>
-                  <small>支持 PPT, PPTX, PDF（建议 &lt;5MB，大文件可联系管理员）</small>
-                </div>
-              </div>
-              <div id="uploaded-file-${lid}" class="file-uploaded" style="display:none">
-                ${Icon.check}
-                <span class="file-uploaded-name" id="uploaded-name-${lid}"></span>
-                <button type="button" class="btn btn-ghost btn-sm" id="remove-ppt-${lid}" style="padding:2px 6px;color:var(--danger)">${Icon.x}</button>
-              </div>
-              <div class="upload-status" id="upload-status-${lid}" style="display:none"></div>
-              <input type="hidden" name="ppt-data-${lid}" id="ppt-data-${lid}">
-              <input type="hidden" name="ppt-name-${lid}" id="ppt-name-${lid}">
-            </div>
-
             <!-- Transcript -->
             <div class="form-section">
               <div class="form-section-title">文字稿（可选）</div>
@@ -837,8 +812,6 @@ class MeetingApp {
 
     // Bind keyword tag events
     this._bindKeywordTags(lid);
-    // Bind file upload events
-    this._bindFileUpload(lid);
     // Bind form submit
     this._bindLiteratureFormSubmit(lid, meetingId);
   }
@@ -875,19 +848,23 @@ class MeetingApp {
     });
   }
 
-  _bindFileUpload(lid) {
-    const uploadArea = document.getElementById(`upload-area-${lid}`);
-    const fileInput = document.getElementById(`ppt-file-${lid}`);
-    const uploadedDiv = document.getElementById(`uploaded-file-${lid}`);
-    const uploadedName = document.getElementById(`uploaded-name-${lid}`);
-    const pptData = document.getElementById(`ppt-data-${lid}`);
-    const pptName = document.getElementById(`ppt-name-${lid}`);
-    const removePptBtn = document.getElementById(`remove-ppt-${lid}`);
-    const statusDiv = document.getElementById(`upload-status-${lid}`);
+  /**
+   * 参与者级别 PPT 上传绑定（上传至参与者，而非单篇文献）。
+   * pid: participant block id
+   */
+  _bindParticipantFileUpload(pid) {
+    const uploadArea = document.getElementById(`p-ppt-upload-area-${pid}`);
+    const fileInput = document.getElementById(`p-ppt-file-${pid}`);
+    const uploadedDiv = document.getElementById(`p-ppt-uploaded-file-${pid}`);
+    const uploadedName = document.getElementById(`p-ppt-uploaded-name-${pid}`);
+    const pptData = document.getElementById(`p-ppt-data-${pid}`);
+    const pptName = document.getElementById(`p-ppt-name-${pid}`);
+    const removeBtn = document.getElementById(`p-remove-ppt-${pid}`);
+    const statusDiv = document.getElementById(`p-ppt-status-${pid}`);
 
     if (!uploadArea || !fileInput) return;
 
-    const showUploadStatus = (msg, type) => {
+    const showStatus = (msg, type) => {
       statusDiv.className = `upload-status ${type}`;
       statusDiv.innerHTML = msg;
       statusDiv.style.display = 'flex';
@@ -899,23 +876,20 @@ class MeetingApp {
         alert('文件过大（超过 50MB），建议压缩或转 PDF。');
         return;
       }
-      showUploadStatus(`${Icon.upload} 正在读取文件...`, 'loading');
+      showStatus(`${Icon.upload} 正在读取文件...`, 'loading');
 
       const reader = new FileReader();
       reader.onload = (ev) => {
-        const fullDataUrl = ev.target.result;
-        const base64Content = fullDataUrl.split(',')[1];
-
-        showUploadStatus(`${Icon.upload} 文件已准备好，将在保存时上传`, 'success');
-          pptData.value = `pending:${base64Content}`;
-          pptName.value = file.name;
-
+        const base64Content = ev.target.result.split(',')[1];
+        pptData.value = `pending:${base64Content}`;
+        pptName.value = file.name;
         uploadedName.textContent = file.name;
         uploadArea.style.display = 'none';
         uploadedDiv.style.display = 'flex';
+        showStatus(`${Icon.check} 已就绪`, 'success');
       };
       reader.onerror = () => {
-        showUploadStatus('文件读取失败', 'error');
+        showStatus('文件读取失败', 'error');
         alert('文件读取失败');
       };
       reader.readAsDataURL(file);
@@ -930,7 +904,7 @@ class MeetingApp {
       handleFile(e.dataTransfer.files[0]);
     });
     fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
-    removePptBtn.addEventListener('click', () => {
+    removeBtn.addEventListener('click', () => {
       pptData.value = '';
       pptName.value = '';
       fileInput.value = '';
@@ -966,8 +940,6 @@ class MeetingApp {
         }
 
         const litId = String(Date.now());
-        const pptDataUrl = document.getElementById(`ppt-data-${lid}`).value;
-        const pptFileName = document.getElementById(`ppt-name-${lid}`).value;
         const kwTags = document.querySelectorAll(`#kw-tags-${lid} .keyword-tag`);
         const keywords = [...kwTags].map(t => t.dataset.kw).filter(Boolean);
 
@@ -979,32 +951,8 @@ class MeetingApp {
           doi: document.getElementById(`lit-doi-${lid}`).value.trim(),
           link: document.getElementById(`lit-link-${lid}`).value.trim(),
           keywords,
-          pptDataUrl: this._normalizePptDataUrl(pptDataUrl),
-          pptFileName,
           transcript: document.getElementById(`lit-transcript-${lid}`).value.trim()
         };
-
-        // Upload PPT to GitHub if pending
-        if (lit.pptDataUrl && lit.pptDataUrl.startsWith('pending:')) {
-          const base64Content = lit.pptDataUrl.slice(8);
-          if (base64Content) {
-            try {
-              const result = await FileAPI.upload(base64Content, pptFileName, meetingId);
-              lit.pptDataUrl = `repo:${result.sha}`;
-            } catch (err) {
-              // 上传失败时降级为本地存储（文件会变大，但不会丢失）
-              if (base64Content.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
-                lit.pptDataUrl = `local:${base64Content}`;
-              } else {
-                alert('上传失败（' + (err.message || '') + '）且文件偏大，将不保存该附件。请稍后重试或压缩文件。');
-                lit.pptDataUrl = '';
-                lit.pptFileName = '';
-              }
-            }
-          } else {
-            lit.pptDataUrl = '';
-          }
-        }
 
         participant.literature.push(lit);
         await Storage.updateMeeting(meetingId, { ...meeting, participants });
@@ -1017,17 +965,6 @@ class MeetingApp {
         submitBtn.textContent = `${Icon.check} 保存文献`;
       }
     });
-  }
-
-  _normalizePptDataUrl(pptDataUrl) {
-    if (!pptDataUrl) return '';
-    if (pptDataUrl.startsWith('local:') || pptDataUrl.startsWith('repo:') || pptDataUrl.startsWith('pending:')) {
-      return pptDataUrl;
-    }
-    if (pptDataUrl.includes(',')) {
-      return `local:${pptDataUrl.split(',')[1]}`;
-    }
-    return pptDataUrl;
   }
 
   // ── Meeting Form (Add / Edit) ─────────────────────────────────────────────
@@ -1118,24 +1055,22 @@ class MeetingApp {
 
       const data = this._collectFormData();
 
-      // Upload pending files to GitHub (直接 PUT，不经过 Vercel，无体积累赘)
+      // Upload pending participant PPTs to GitHub (直接 PUT，不经过 Vercel)
       for (const p of (data.participants || [])) {
-        for (const l of (p.literature || [])) {
-          if (l.pptDataUrl && l.pptDataUrl.startsWith('pending:')) {
-            const base64Content = l.pptDataUrl.slice(8);
-            if (!base64Content) continue;
-            try {
-              const result = await FileAPI.upload(base64Content, l.pptFileName, targetId);
-              l.pptDataUrl = `repo:${result.sha}`;
-            } catch (err) {
-              if (base64Content.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
-                alert('上传失败（' + (err.message || '') + '），文件将改为本地存储，关闭浏览器后可能丢失。');
-                l.pptDataUrl = `local:${base64Content}`;
-              } else {
-                alert('上传失败（' + (err.message || '') + '）且文件偏大，将不保存该附件。请稍后重试或压缩文件。');
-                l.pptDataUrl = '';
-                l.pptFileName = '';
-              }
+        if (p.pptDataUrl && p.pptDataUrl.startsWith('pending:')) {
+          const base64Content = p.pptDataUrl.slice(8);
+          if (!base64Content) continue;
+          try {
+            const result = await FileAPI.upload(base64Content, p.pptFileName, targetId);
+            p.pptDataUrl = `repo:${result.sha}`;
+          } catch (err) {
+            if (base64Content.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
+              alert(`「${p.name}」的 PPT 上传失败（${err.message || ''}），将改为本地存储，关闭浏览器后可能丢失。`);
+              p.pptDataUrl = `local:${base64Content}`;
+            } else {
+              alert(`「${p.name}」的 PPT 上传失败（${err.message || ''}）且文件偏大，本次将不保存该附件。`);
+              p.pptDataUrl = '';
+              p.pptFileName = '';
             }
           }
         }
@@ -1171,6 +1106,9 @@ class MeetingApp {
   _addParticipantBlock(container, existing) {
     const pid = existing ? existing.id : uuid();
     const litData = existing ? existing.literature : [];
+    const existingPptDataUrl = existing ? existing.pptDataUrl : '';
+    const existingPptFileName = existing ? existing.pptFileName : '';
+    const hasExistingPpt = !!(existingPptDataUrl || existingPptFileName);
 
     const block = document.createElement('div');
     block.className = 'participant-block fade-in';
@@ -1181,6 +1119,28 @@ class MeetingApp {
         <input type="text" class="form-input" name="p-name-${pid}" placeholder="参与者姓名（如：张三）" value="${escapeHtml(existing ? existing.name : '')}" required>
         <button type="button" class="btn btn-danger btn-sm remove-participant-btn">${Icon.trash} 移除</button>
       </div>
+
+      <!-- PPT / 演示文件（属于该参与者的全部文献） -->
+      <div class="form-section" style="padding-top:12px">
+        <div class="form-section-title" style="font-size:0.75rem">PPT / 演示文件（该参与者共享）</div>
+        <div class="file-upload-area" id="p-ppt-upload-area-${pid}">
+          <input type="file" id="p-ppt-file-${pid}" accept=".ppt,.pptx,.pdf,.png,.jpg,.jpeg,.gif,.webp,.pptm">
+          <div class="file-upload-icon">${Icon.upload}</div>
+          <div class="file-upload-text">
+            <strong>点击选择</strong> 或拖拽文件到此处<br>
+            <small>支持 PPT, PPTX, PDF（建议 &lt;5MB）</small>
+          </div>
+        </div>
+        <div id="p-ppt-uploaded-file-${pid}" class="file-uploaded" style="${hasExistingPpt ? '' : 'display:none'}">
+          ${Icon.check}
+          <span class="file-uploaded-name" id="p-ppt-uploaded-name-${pid}">${escapeHtml(existingPptFileName)}</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="p-remove-ppt-${pid}" style="padding:2px 6px;color:var(--danger)">${Icon.x}</button>
+        </div>
+        <div class="upload-status" id="p-ppt-status-${pid}" style="display:none"></div>
+        <input type="hidden" id="p-ppt-data-${pid}" value="${escapeHtml(existingPptDataUrl)}">
+        <input type="hidden" id="p-ppt-name-${pid}" value="${escapeHtml(existingPptFileName)}">
+      </div>
+
       <div class="participant-literature">
         <div style="font-size:0.8125rem;font-weight:600;color:var(--primary);margin-bottom:10px">文献列表</div>
         <div class="lit-blocks-container" data-pid="${pid}"></div>
@@ -1199,6 +1159,9 @@ class MeetingApp {
     block.querySelector('.add-lit-btn').addEventListener('click', () => {
       this._addLiteratureBlock(block.querySelector('.lit-blocks-container'), null);
     });
+
+    // 绑定参与者级别 PPT 上传
+    this._bindParticipantFileUpload(pid);
 
     const litContainer = block.querySelector('.lit-blocks-container');
     if (litData.length === 0) {
@@ -1253,26 +1216,6 @@ class MeetingApp {
         <input type="text" class="form-input" id="kw-input-${lid}" placeholder="输入关键词后按回车" style="margin-top:4px">
       </div>
 
-      <div class="form-group">
-        <label class="form-label" style="font-size:0.75rem">上传 PPT / PDF</label>
-        <div class="file-upload-area" id="upload-area-${lid}">
-          <input type="file" id="ppt-file-${lid}" accept=".ppt,.pptx,.pdf,.png,.jpg,.jpeg,.gif,.webp,.pptm">
-          <div class="file-upload-icon">${Icon.upload}</div>
-          <div class="file-upload-text">
-            <strong>点击选择</strong> 或拖拽文件到此处<br>
-            <small>支持 PPT, PPTX, PDF, PNG, JPG（建议 &lt;5MB）</small>
-          </div>
-        </div>
-        <div id="uploaded-file-${lid}" class="file-uploaded" style="${existing && existing.pptFileName ? '' : 'display:none'}">
-          ${Icon.check}
-          <span class="file-uploaded-name" id="uploaded-name-${lid}">${escapeHtml(existing ? existing.pptFileName : '')}</span>
-          <button type="button" class="btn btn-ghost btn-sm" id="remove-ppt-${lid}" style="padding:2px 6px;color:var(--danger)">${Icon.x}</button>
-        </div>
-        <div class="upload-status" id="upload-status-${lid}" style="display:none"></div>
-        <input type="hidden" name="ppt-data-${lid}" id="ppt-data-${lid}" value="${escapeHtml(existing ? existing.pptDataUrl : '')}">
-        <input type="hidden" name="ppt-name-${lid}" id="ppt-name-${lid}" value="${escapeHtml(existing ? existing.pptFileName : '')}">
-      </div>
-
       <div class="form-group" style="margin-bottom:0">
         <label class="form-label" style="font-size:0.75rem">文字稿</label>
         <textarea class="form-textarea" name="lit-transcript-${lid}" rows="4" placeholder="在此粘贴或输入文献汇报的文字稿内容...">${escapeHtml(existing ? existing.transcript : '')}</textarea>
@@ -1281,12 +1224,8 @@ class MeetingApp {
 
     container.appendChild(block);
 
-    // Remove lit block
     block.querySelector('.remove-lit-btn').addEventListener('click', () => block.remove());
-
-    // Reuse shared keyword + file-upload binding
     this._bindKeywordTags(lid);
-    this._bindFileUpload(lid);
   }
 
   _collectFormData() {
@@ -1300,6 +1239,16 @@ class MeetingApp {
       const name = block.querySelector(`[name="p-name-${pid}"]`).value.trim();
       if (!name) return;
 
+      // 参与者级别 PPT（共享给该参与者的全部文献）
+      const pptDataUrl = document.getElementById(`p-ppt-data-${pid}`).value || '';
+      let normalizedPpt = pptDataUrl;
+      if (pptDataUrl && !pptDataUrl.startsWith('local:') && !pptDataUrl.startsWith('repo:') && !pptDataUrl.startsWith('pending:')) {
+        if (pptDataUrl.includes(',')) {
+          normalizedPpt = `local:${pptDataUrl.split(',')[1]}`;
+        }
+      }
+      const pptFileName = document.getElementById(`p-ppt-name-${pid}`).value || '';
+
       const literature = [];
       block.querySelectorAll('.literature-block').forEach(lb => {
         const lid = lb.dataset.lid;
@@ -1309,15 +1258,6 @@ class MeetingApp {
         const kwTags = lb.querySelectorAll(`#kw-tags-${lid} .keyword-tag`);
         const keywords = [...kwTags].map(t => t.dataset.kw).filter(Boolean);
 
-        const pptDataUrl = lb.querySelector(`[name="ppt-data-${lid}"]`).value;
-        // Normalize old format (data:...;base64,...) to local: prefix
-        let normalized = pptDataUrl;
-        if (pptDataUrl && !pptDataUrl.startsWith('local:') && !pptDataUrl.startsWith('repo:') && !pptDataUrl.startsWith('pending:')) {
-          if (pptDataUrl.includes(',')) {
-            normalized = `local:${pptDataUrl.split(',')[1]}`;
-          }
-        }
-
         literature.push({
           id: lid,
           title,
@@ -1326,13 +1266,11 @@ class MeetingApp {
           doi: lb.querySelector(`[name="lit-doi-${lid}"]`).value.trim(),
           link: lb.querySelector(`[name="lit-link-${lid}"]`).value.trim(),
           keywords,
-          pptDataUrl: normalized,
-          pptFileName: lb.querySelector(`[name="ppt-name-${lid}"]`).value,
           transcript: lb.querySelector(`[name="lit-transcript-${lid}"]`).value.trim()
         });
       });
 
-      participants.push({ id: pid, name, literature });
+      participants.push({ id: pid, name, pptDataUrl: normalizedPpt, pptFileName, literature });
     });
 
     return { date, topic, notes, participants };
