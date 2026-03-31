@@ -53,19 +53,11 @@ function _getMimeType(fileName) {
   return map[ext] || 'application/octet-stream';
 }
 
-/** 回退到 local: 存储时，Base64 字符数上限（超过则放弃保存附件，避免整单 JSON 过大） */
 const MAX_LOCAL_FALLBACK_B64_CHARS = 2_800_000;
 
-// ─── File API (GitHub 直传，token 由后端临时签发，文件不经过 Vercel) ──────────
-/**
- * 两步上传：
- *   1. POST /api/files/upload → 获取 GitHub PUT URL + 临时 Authorization
- *   2. PUT {url}（直接到 GitHub）→ 上传文件体
- * 这样 Base64 文件完全绕过 Vercel，无 4.5MB 硬限制。
- */
+// ─── File API ──────────────────────────────────────────────────────────────
 const FileAPI = {
   async upload(base64Content, fileName, meetingId) {
-    // Step 1：拿临时凭证
     const meta = await fetch('/api/files/upload', {
       method: 'POST',
       headers: {
@@ -82,7 +74,6 @@ const FileAPI = {
       return r.json();
     });
 
-    // Step 2：直接 PUT 到 GitHub（不经过 Vercel）
     const bodyTemplate = meta.bodyTemplate;
     bodyTemplate.content = base64Content;
 
@@ -117,7 +108,6 @@ const FileAPI = {
 };
 
 // ─── Storage ───────────────────────────────────────────────────────────────
-// All methods are async and call the Vercel Serverless API backed by Supabase.
 const Storage = {
   KEY: 'labMeetingRecords',
 
@@ -127,7 +117,6 @@ const Storage = {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch (e) {
-      // Fallback to localStorage if API is unavailable
       console.warn('[Storage.load] API failed, falling back to localStorage', e);
       try {
         const raw = localStorage.getItem(this.KEY);
@@ -230,7 +219,6 @@ const Storage = {
         const text = await file.text();
         const data = JSON.parse(text);
         if (!Array.isArray(data)) throw new Error('格式错误');
-        // Batch import each meeting via the API
         let successCount = 0;
         for (const meeting of data) {
           const { date, topic, notes, participants } = meeting;
@@ -249,7 +237,7 @@ const Storage = {
   }
 };
 
-// ─── Icons (inline SVG helpers) ────────────────────────────────────────────
+// ─── Icons ────────────────────────────────────────────────────────────────
 const Icon = {
   book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -315,9 +303,7 @@ passwordSubmit.addEventListener('click', () => {
 });
 
 passwordInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    passwordSubmit.click();
-  }
+  if (e.key === 'Enter') passwordSubmit.click();
 });
 
 passwordModal.addEventListener('click', e => {
@@ -375,11 +361,7 @@ class MeetingApp {
   _bindImportExport() {
     document.getElementById('btn-export').addEventListener('click', async () => {
       const data = await Storage.load();
-      if (data.length === 0) {
-        alert('暂无数据可导出。');
-        return;
-      }
-      // Trigger download directly from the loaded data
+      if (data.length === 0) { alert('暂无数据可导出。'); return; }
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -409,20 +391,16 @@ class MeetingApp {
 
   _route() {
     const hash = location.hash || '#meeting-list';
-
     if (hash === '#meeting-list') {
       this._renderList();
     } else if (hash === '#new-meeting') {
       this._renderMeetingForm();
     } else if (hash.startsWith('#meeting/')) {
-      const id = hash.split('/')[1];
-      this._renderMeetingDetail(id);
+      this._renderMeetingDetail(hash.split('/')[1]);
     } else if (hash.startsWith('#edit-meeting/')) {
-      const id = hash.split('/')[1];
-      this._renderMeetingForm(id);
+      this._renderMeetingForm(hash.split('/')[1]);
     } else if (hash.startsWith('#add-literature/')) {
-      const meetingId = hash.split('/')[1];
-      this._renderAddLiteratureForm(meetingId);
+      this._renderAddLiteratureForm(hash.split('/')[1]);
     } else {
       this._renderList();
     }
@@ -431,15 +409,11 @@ class MeetingApp {
   // ── Dashboard / Meeting List ──────────────────────────────────────────────
   async _renderList() {
     let records;
-    try {
-      records = await Storage.load();
-    } catch {
-      records = [];
-    }
+    try { records = await Storage.load(); }
+    catch { records = []; }
 
     document.getElementById('app-root').innerHTML = `
       <div class="dashboard">
-        <!-- Left: Meeting List -->
         <div>
           <div class="card">
             <div class="card-header">
@@ -447,27 +421,18 @@ class MeetingApp {
               <span class="stat-chip stat-chip-blue">${records.length} 次</span>
             </div>
             <div class="card-body">
-              ${records.length === 0 ? this._emptyState(
-                Icon.book,
-                '还没有组会记录',
-                '<strong>点击右上角「新建组会」</strong>，开始记录第一次组会吧'
-              ) : `<div class="meeting-list" id="meeting-list-container"></div>`}
+              ${records.length === 0 ? this._emptyState(Icon.book, '还没有组会记录', '<strong>点击右上角「新建组会」</strong>，开始记录第一次组会吧') :
+                `<div class="meeting-list" id="meeting-list-container"></div>`}
             </div>
           </div>
         </div>
-
-        <!-- Right: Literature Library -->
         <div>
           <div class="card">
             <div class="card-header">
               <h2>${Icon.library} 文献资料库</h2>
             </div>
             <div class="card-body">
-              ${records.length === 0 ? this._emptyState(
-                Icon.library,
-                '文献资料库为空',
-                '添加组会并录入文献后，所有文献将汇总显示在这里'
-              ) : `
+              ${records.length === 0 ? this._emptyState(Icon.library, '文献资料库为空', '添加组会并录入文献后，所有文献将汇总显示在这里') : `
                 <div class="literature-search">
                   ${Icon.search}
                   <input type="text" id="lit-search" placeholder="搜索文献名、作者或关键词..." autocomplete="off">
@@ -481,8 +446,7 @@ class MeetingApp {
             </div>
           </div>
         </div>
-      </div>
-    `;
+      </div>`;
 
     if (records.length > 0) {
       this._renderMeetingCards(records);
@@ -496,16 +460,13 @@ class MeetingApp {
 
     container.innerHTML = records.map(m => {
       const totalLit = (m.participants || []).reduce((s, p) => s + (p.literature || []).length, 0);
-      const date = new Date(m.date);
-      const month = date.toLocaleString('zh-CN', { month: 'short' });
-      const day = date.getDate();
+      const d = new Date(m.date);
       const hasNotes = m.notes && m.notes.trim();
-
       return `
         <div class="meeting-card fade-in" data-id="${m.id}">
           <div class="meeting-card-date">
-            <span class="month">${month}</span>
-            <span class="day">${day}</span>
+            <span class="month">${d.toLocaleString('zh-CN', { month: 'short' })}</span>
+            <span class="day">${d.getDate()}</span>
           </div>
           <div class="meeting-card-info">
             <h3>${escapeHtml(m.topic || formatDate(m.date))}</h3>
@@ -520,8 +481,7 @@ class MeetingApp {
             <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${m.id}" title="编辑">${Icon.edit}</button>
             <button class="btn btn-ghost btn-sm" data-action="delete" data-id="${m.id}" title="删除" style="color:var(--danger)">${Icon.trash}</button>
           </div>
-        </div>
-      `;
+        </div>`;
     }).join('');
 
     container.querySelectorAll('.meeting-card').forEach(card => {
@@ -558,10 +518,7 @@ class MeetingApp {
 
     const renderItems = (items) => {
       if (items.length === 0) {
-        container.innerHTML = `<div class="empty-state" style="padding:32px 0">
-          ${Icon.search}
-          <p>没有找到匹配的文献</p>
-        </div>`;
+        container.innerHTML = `<div class="empty-state" style="padding:32px 0">${Icon.search}<p>没有找到匹配的文献</p></div>`;
         return;
       }
       container.innerHTML = items.map(lit => `
@@ -572,23 +529,16 @@ class MeetingApp {
             ${lit.journal ? `<span>${escapeHtml(lit.journal)}</span>` : ''}
             <span class="literature-item-badge">${Icon.calendar} ${formatDate(lit.meetingDate)}</span>
           </div>
-          ${lit.keywords && lit.keywords.length > 0 ? `
-            <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px">
-              ${lit.keywords.map(k => `<span class="tag">${escapeHtml(k)}</span>`).join('')}
-            </div>` : ''}
-        </div>
-      `).join('');
+          ${(lit.keywords || []).length > 0 ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${lit.keywords.map(k => `<span class="tag">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
+        </div>`).join('');
 
       container.querySelectorAll('.literature-item').forEach(item => {
-        item.addEventListener('click', () => {
-          location.hash = `#meeting/${item.dataset.meeting}`;
-        });
+        item.addEventListener('click', () => { location.hash = `#meeting/${item.dataset.meeting}`; });
       });
     };
 
     renderItems(allLit);
 
-    // Search
     let timer;
     document.getElementById('lit-search').addEventListener('input', e => {
       clearTimeout(timer);
@@ -618,18 +568,10 @@ class MeetingApp {
     return items;
   }
 
-  _totalLitCount(records) {
-    return this._collectLiterature(records).length;
-  }
+  _totalLitCount(records) { return this._collectLiterature(records).length; }
 
   _emptyState(icon, title, message) {
-    return `
-      <div class="empty-state">
-        ${icon}
-        <strong>${title}</strong>
-        <p>${message}</p>
-      </div>
-    `;
+    return `<div class="empty-state">${icon}<strong>${title}</strong><p>${message}</p></div>`;
   }
 
   // ── Meeting Detail ─────────────────────────────────────────────────────────
@@ -638,8 +580,7 @@ class MeetingApp {
     if (!meeting) {
       document.getElementById('app-root').innerHTML = `
         <div class="empty-state" style="padding:80px 0">
-          ${Icon.info}
-          <strong>记录未找到</strong>
+          ${Icon.info}<strong>记录未找到</strong>
           <p>该组会记录可能已被删除。</p>
           <a href="#meeting-list" class="btn btn-primary" style="margin-top:12px">返回首页</a>
         </div>`;
@@ -651,7 +592,6 @@ class MeetingApp {
 
     document.getElementById('app-root').innerHTML = `
       <a class="back-link" href="#meeting-list">${Icon.chevronLeft} 返回组会列表</a>
-
       <div class="detail-header fade-in">
         <h1 style="margin-bottom:8px">${escapeHtml(meeting.topic || '第 X 次组会')}</h1>
         <div class="detail-meta">
@@ -660,19 +600,16 @@ class MeetingApp {
           <span class="detail-meta-item">${Icon.users} ${participants.length} 位成员</span>
           <span class="detail-meta-item">${Icon.fileText} ${totalLit} 篇文献</span>
         </div>
-        ${meeting.notes && meeting.notes.trim() ? `
-          <div class="detail-notes">${escapeHtml(meeting.notes)}</div>` : ''}
-        <div style="margin-top:16px; display:flex; gap:8px">
+        ${meeting.notes && meeting.notes.trim() ? `<div class="detail-notes">${escapeHtml(meeting.notes)}</div>` : ''}
+        <div style="margin-top:16px;display:flex;gap:8px">
           <a href="#add-literature/${id}" class="btn btn-primary btn-sm">${Icon.plus} 上传我的文献</a>
           <a href="#edit-meeting/${id}" class="btn btn-secondary btn-sm">${Icon.edit} 编辑</a>
           <button class="btn btn-danger btn-sm" id="detail-delete-btn">${Icon.trash} 删除此记录</button>
         </div>
       </div>
-
       ${participants.length === 0 ? `
         <div class="empty-state">
-          ${Icon.users}
-          <strong>暂无参与者记录</strong>
+          ${Icon.users}<strong>暂无参与者记录</strong>
           <p>点击下方「上传我的文献」添加你的文献</p>
           <a href="#add-literature/${id}" class="btn btn-primary" style="margin-top:12px">${Icon.plus} 上传我的文献</a>
         </div>` : participants.map(p => this._renderParticipantCard(p, id)).join('')}
@@ -690,7 +627,6 @@ class MeetingApp {
       location.hash = '#meeting-list';
     });
 
-    // GitHub repo file download click handler
     document.getElementById('app-root').addEventListener('click', async (e) => {
       const link = e.target.closest('.repo-download');
       if (!link) return;
@@ -720,27 +656,24 @@ class MeetingApp {
         alert('下载失败: ' + err.message);
       }
       link.disabled = false;
-      link.textContent = `${Icon.paperclip} 下载PPT`;
+      link.textContent = Icon.paperclip + ' 下载PPT';
     });
   }
 
   _renderParticipantCard(participant, meetingId) {
     const literature = participant.literature || [];
 
-    // 参与者级别 PPT 下载按钮
     const pptBtn = (() => {
       const raw = participant.pptDataUrl;
       if (!raw) return '';
       if (raw.startsWith('local:')) {
-        const content = raw.slice(6);
         const mimeType = _getMimeType(participant.pptFileName);
-        const dataUrl = `data:${mimeType};base64,${content}`;
+        const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
         return `<a href="${dataUrl}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
       }
       if (raw.startsWith('repo:')) {
         return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(participant.pptFileName || '')}">${Icon.paperclip} 下载PPT</a>`;
       }
-      // Old format backward compat
       return `<a href="${escapeHtml(raw)}" download="${escapeHtml(participant.pptFileName || 'PPT文件')}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
     })();
 
@@ -754,247 +687,238 @@ class MeetingApp {
           </div>
         </div>
         <div class="participant-detail-body">
-          ${literature.length === 0 ? `
-            <div style="color:var(--text-muted);font-size:0.875rem;text-align:center;padding:16px">
-              暂无文献记录
-            </div>` : literature.map(lit => `
+          ${literature.length === 0 ? `<div style="color:var(--text-muted);font-size:0.875rem;text-align:center;padding:16px">暂无文献记录</div>` :
+            literature.map(lit => `
             <div class="literature-detail-item">
               <div class="literature-detail-title">${escapeHtml(lit.title || '（无标题）')}</div>
               ${lit.authors ? `<div class="literature-detail-authors">${escapeHtml(lit.authors)}${lit.journal ? ' — ' + escapeHtml(lit.journal) : ''}</div>` : ''}
-              ${(lit.keywords || []).length > 0 ? `
-                <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">
-                  ${lit.keywords.map(k => `<span class="tag">${escapeHtml(k)}</span>`).join('')}
-                </div>` : ''}
-
+              ${(lit.keywords || []).length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${lit.keywords.map(k => `<span class="tag">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
               <div class="literature-detail-actions">
                 ${lit.link ? `<a href="${escapeHtml(lit.link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.arrowRight} 访问链接</a>` : ''}
                 ${lit.doi ? `<a href="https://doi.org/${escapeHtml(lit.doi)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.fileText} DOI</a>` : ''}
               </div>
-
-              ${lit.transcript && lit.transcript.trim() ? `
-                <div class="transcript-block">
-                  <div class="transcript-block-title">${Icon.note} 文字稿</div>
-                  <div class="transcript-content">${escapeHtml(lit.transcript)}</div>
-                </div>` : ''}
-            </div>
-          `).join('')}
+              ${lit.transcript && lit.transcript.trim() ? `<div class="transcript-block"><div class="transcript-block-title">${Icon.note} 文字稿</div><div class="transcript-content">${escapeHtml(lit.transcript)}</div></div>` : ''}
+            </div>`).join('')}
         </div>
-      </div>
-    `;
+      </div>`;
   }
 
-  // ── Add Literature Form (standalone, no edit mode required) ───────────────
+  // ── Add Literature Form (1 PPT + multiple papers per session) ───────────────
   async _renderAddLiteratureForm(meetingId) {
     const meeting = await Storage.getMeeting(meetingId);
     if (!meeting) {
       document.getElementById('app-root').innerHTML = `
         <div class="empty-state" style="padding:80px 0">
-          ${Icon.info}
-          <strong>组会未找到</strong>
+          ${Icon.info}<strong>组会未找到</strong>
           <p>该组会记录可能已被删除。</p>
           <a href="#meeting-list" class="btn btn-primary" style="margin-top:12px">返回首页</a>
         </div>`;
       return;
     }
 
-    const participants = meeting.participants || [];
-    const lid = 'new-' + Date.now();
+    const existingParticipants = meeting.participants || [];
+    const pid = 'lf-' + Date.now();
 
     document.getElementById('app-root').innerHTML = `
       <a class="back-link" href="#meeting/${meetingId}">${Icon.chevronLeft} 返回组会详情</a>
-
       <div class="page-header fade-in">
         <h1>${Icon.upload} 上传我的文献</h1>
-        <p>为「${escapeHtml(meeting.topic || '本次组会')}」添加文献记录</p>
+        <p>为「${escapeHtml(meeting.topic || '本次组会')}」添加文献记录 — 同一份 PPT 可对应多篇文献</p>
       </div>
-
       <div class="card fade-in">
         <div class="card-body">
           <form id="lit-form">
-            <!-- Participant -->
+
             <div class="form-section">
-              <div class="form-section-title">我的信息</div>
+              <div class="form-section-title">上传者信息</div>
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label">姓名 <span class="required">*</span></label>
-                  <input type="text" class="form-input" id="lit-author-name-${lid}"
-                    list="author-suggestions-${lid}" autocomplete="off"
-                    placeholder="输入或选择已有成员姓名">
-                  <datalist id="author-suggestions-${lid}">
-                    ${participants.map(p => `<option value="${escapeHtml(p.name)}">`).join('')}
+                  <input type="text" class="form-input" id="lf-author-${pid}" list="lf-authors-${pid}" autocomplete="off" placeholder="输入或选择已有成员姓名">
+                  <datalist id="lf-authors-${pid}">
+                    ${existingParticipants.map(p => `<option value="${escapeHtml(p.name)}">`).join('')}
                   </datalist>
                 </div>
               </div>
-            </div>
-
-            <!-- Literature Info -->
-            <div class="form-section">
-              <div class="form-section-title">文献信息</div>
-              <div class="form-group">
-                <label class="form-label">文献标题 <span class="required">*</span></label>
-                <input type="text" class="form-input" id="lit-title-${lid}" placeholder="例如：Deep Learning for Computer Vision">
-              </div>
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="form-label">作者</label>
-                  <input type="text" class="form-input" id="lit-authors-${lid}" placeholder="例如：LeCun, Hinton...">
+              <div class="form-group" style="margin-top:14px">
+                <label class="form-label" style="font-size:0.8125rem">本次汇报 PPT / PDF <span class="required">*</span></label>
+                <div class="file-upload-area" id="lf-ppt-area-${pid}">
+                  <input type="file" id="lf-ppt-file-${pid}" accept=".ppt,.pptx,.pdf,.png,.jpg,.jpeg,.gif,.webp,.pptm">
+                  <div class="file-upload-icon">${Icon.upload}</div>
+                  <div class="file-upload-text">
+                    <strong>点击选择</strong> 或拖拽文件到此处<br>
+                    <small>该参与者所有文献共用这一份 PPT/PDF</small>
+                  </div>
                 </div>
-                <div class="form-group">
-                  <label class="form-label">期刊/会议</label>
-                  <input type="text" class="form-input" id="lit-journal-${lid}" placeholder="例如：Nature, NeurIPS...">
+                <div id="lf-ppt-done-${pid}" class="file-uploaded" style="display:none">
+                  ${Icon.check}
+                  <span class="file-uploaded-name" id="lf-ppt-name-${pid}"></span>
+                  <button type="button" id="lf-ppt-rm-${pid}" style="padding:2px 6px;color:var(--danger);background:none;border:none;cursor:pointer">${Icon.x}</button>
                 </div>
-              </div>
-              <div class="form-row">
-                <div class="form-group">
-                  <label class="form-label">DOI</label>
-                  <input type="text" class="form-input" id="lit-doi-${lid}" placeholder="例如：10.1038/nature14539">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">链接</label>
-                  <input type="url" class="form-input" id="lit-link-${lid}" placeholder="https://...">
-                </div>
-              </div>
-              <div class="form-group">
-                <label class="form-label" style="font-size:0.75rem">关键词（输入后回车添加）</label>
-                <div class="keyword-tags" id="kw-tags-${lid}" style="margin-bottom:6px"></div>
-                <input type="text" class="form-input" id="kw-input-${lid}" placeholder="输入关键词后按回车">
+                <div class="upload-status" id="lf-ppt-status-${pid}" style="display:none"></div>
+                <input type="hidden" id="lf-ppt-data-${pid}" value="">
+                <input type="hidden" id="lf-ppt-name2-${pid}" value="">
               </div>
             </div>
 
-            <!-- Transcript -->
             <div class="form-section">
-              <div class="form-section-title">文字稿（可选）</div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.75rem">演讲内容或详细笔记</label>
-                <textarea class="form-textarea" id="lit-transcript-${lid}" rows="5"
-                  placeholder="记录分享的主要内容、关键结论、个人收获等..."></textarea>
-              </div>
+              <div class="form-section-title">文献列表</div>
+              <div id="lf-lit-container-${pid}"></div>
+              <button type="button" id="lf-add-lit-${pid}" class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px">
+                ${Icon.plus} 添加文献
+              </button>
             </div>
 
             <div style="margin-top:24px;display:flex;gap:12px">
-              <button type="submit" class="btn btn-primary" id="submit-lit-btn">${Icon.check} 保存文献</button>
+              <button type="submit" class="btn btn-primary btn-lg" id="lf-submit-${pid}">${Icon.check} 保存所有文献</button>
               <a href="#meeting/${meetingId}" class="btn btn-secondary">取消</a>
             </div>
           </form>
         </div>
-      </div>
-    `;
+      </div>`;
 
-    // Bind keyword tag events
-    this._bindKeywordTags(lid);
-    // Bind form submit
-    this._bindLiteratureFormSubmit(lid, meetingId);
+    this._bindLitFormPpt(pid);
+    this._addLitRow(pid, 'lr0', null);
+    document.getElementById(`lf-add-lit-${pid}`).addEventListener('click', () => {
+      const n = Date.now();
+      this._addLitRow(pid, 'lr' + n, null);
+    });
+    this._bindLitFormSubmit(pid, meetingId);
   }
 
-  _bindKeywordTags(lid) {
-    const kwInput = document.getElementById(`kw-input-${lid}`);
-    const kwTags = document.getElementById(`kw-tags-${lid}`);
-    if (!kwInput || !kwTags) return;
+  _bindLitFormPpt(pid) {
+    const area = document.getElementById(`lf-ppt-area-${pid}`);
+    const fileInput = document.getElementById(`lf-ppt-file-${pid}`);
+    const done = document.getElementById(`lf-ppt-done-${pid}`);
+    const nameEl = document.getElementById(`lf-ppt-name-${pid}`);
+    const dataEl = document.getElementById(`lf-ppt-data-${pid}`);
+    const name2El = document.getElementById(`lf-ppt-name2-${pid}`);
+    const rmBtn = document.getElementById(`lf-ppt-rm-${pid}`);
+    const statusEl = document.getElementById(`lf-ppt-status-${pid}`);
+    if (!area || !fileInput) return;
 
-    kwInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const kw = kwInput.value.trim();
-        if (!kw) return;
-        if ([...kwTags.querySelectorAll('.keyword-tag')].some(t => t.dataset.kw === kw)) {
-          kwInput.value = '';
-          return;
-        }
-        const tag = document.createElement('span');
-        tag.className = 'keyword-tag';
-        tag.dataset.kw = kw;
-        tag.innerHTML = `${escapeHtml(kw)}<button type="button" data-lid="${lid}" data-kw="${escapeHtml(kw)}">${Icon.x}</button>`;
-        kwTags.appendChild(tag);
-        kwInput.value = '';
-      }
-    });
-
-    kwTags.addEventListener('click', e => {
-      const btn = e.target.closest('button[data-lid]');
-      if (btn) {
-        const tag = btn.closest('.keyword-tag');
-        if (tag) tag.remove();
-      }
-    });
-  }
-
-  /**
-   * 参与者级别 PPT 上传绑定（上传至参与者，而非单篇文献）。
-   * pid: participant block id
-   */
-  _bindParticipantFileUpload(pid) {
-    const uploadArea = document.getElementById(`p-ppt-upload-area-${pid}`);
-    const fileInput = document.getElementById(`p-ppt-file-${pid}`);
-    const uploadedDiv = document.getElementById(`p-ppt-uploaded-file-${pid}`);
-    const uploadedName = document.getElementById(`p-ppt-uploaded-name-${pid}`);
-    const pptData = document.getElementById(`p-ppt-data-${pid}`);
-    const pptName = document.getElementById(`p-ppt-name-${pid}`);
-    const removeBtn = document.getElementById(`p-remove-ppt-${pid}`);
-    const statusDiv = document.getElementById(`p-ppt-status-${pid}`);
-
-    if (!uploadArea || !fileInput) return;
-
-    const showStatus = (msg, type) => {
-      statusDiv.className = `upload-status ${type}`;
-      statusDiv.innerHTML = msg;
-      statusDiv.style.display = 'flex';
+    const setStatus = (msg, type) => {
+      statusEl.className = `upload-status ${type}`;
+      statusEl.innerHTML = msg;
+      statusEl.style.display = 'flex';
     };
 
     const handleFile = (file) => {
       if (!file) return;
-      if (file.size > 50 * 1024 * 1024) {
-        alert('文件过大（超过 50MB），建议压缩或转 PDF。');
-        return;
-      }
-      showStatus(`${Icon.upload} 正在读取文件...`, 'loading');
-
+      if (file.size > 50 * 1024 * 1024) { alert('文件过大（超过 50MB）'); return; }
+      setStatus(Icon.upload + ' 正在读取文件...', 'loading');
       const reader = new FileReader();
-      reader.onload = (ev) => {
-        const base64Content = ev.target.result.split(',')[1];
-        pptData.value = `pending:${base64Content}`;
-        pptName.value = file.name;
-        uploadedName.textContent = file.name;
-        uploadArea.style.display = 'none';
-        uploadedDiv.style.display = 'flex';
-        showStatus(`${Icon.check} 已就绪`, 'success');
+      reader.onload = ev => {
+        const b64 = ev.target.result.split(',')[1];
+        dataEl.value = `pending:${b64}`;
+        name2El.value = file.name;
+        nameEl.textContent = file.name;
+        area.style.display = 'none';
+        done.style.display = 'flex';
+        setStatus(Icon.check + ' 已就绪，保存时将上传', 'success');
       };
-      reader.onerror = () => {
-        showStatus('文件读取失败', 'error');
-        alert('文件读取失败');
-      };
+      reader.onerror = () => { setStatus('文件读取失败', 'error'); alert('文件读取失败'); };
       reader.readAsDataURL(file);
     };
 
-    uploadArea.addEventListener('click', () => fileInput.click());
-    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
-    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
-    uploadArea.addEventListener('drop', e => {
-      e.preventDefault();
-      uploadArea.classList.remove('drag-over');
-      handleFile(e.dataTransfer.files[0]);
-    });
+    area.addEventListener('click', () => fileInput.click());
+    area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('drag-over'); });
+    area.addEventListener('dragleave', () => area.classList.remove('drag-over'));
+    area.addEventListener('drop', e => { e.preventDefault(); area.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
     fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
-    removeBtn.addEventListener('click', () => {
-      pptData.value = '';
-      pptName.value = '';
-      fileInput.value = '';
-      uploadArea.style.display = '';
-      uploadedDiv.style.display = 'none';
+    rmBtn.addEventListener('click', () => {
+      dataEl.value = ''; name2El.value = ''; fileInput.value = '';
+      area.style.display = ''; done.style.display = 'none'; statusEl.style.display = 'none';
     });
   }
 
-  async _bindLiteratureFormSubmit(lid, meetingId) {
+  _addLitRow(pid, rowId, existing) {
+    const container = document.getElementById(`lf-lit-container-${pid}`);
+    if (!container) return;
+    const block = document.createElement('div');
+    block.className = 'literature-block fade-in';
+    block.dataset.rowId = rowId;
+
+    block.innerHTML = `
+      <div class="literature-block-header">
+        <input type="text" class="form-input" name="lf-lit-title-${rowId}" placeholder="文献标题（必填）" value="${escapeHtml(existing ? existing.title : '')}">
+        <button type="button" class="btn btn-ghost btn-sm remove-lit-btn" style="color:var(--danger);padding:6px">${Icon.x}</button>
+      </div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" style="font-size:0.75rem">作者</label>
+          <input type="text" class="form-input" name="lf-lit-authors-${rowId}" placeholder="作者姓名" value="${escapeHtml(existing ? existing.authors : '')}">
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" style="font-size:0.75rem">期刊 / 来源</label>
+          <input type="text" class="form-input" name="lf-lit-journal-${rowId}" placeholder="期刊名称" value="${escapeHtml(existing ? existing.journal : '')}">
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" style="font-size:0.75rem">DOI</label>
+          <input type="text" class="form-input" name="lf-lit-doi-${rowId}" placeholder="10.xxxx/xxxxx" value="${escapeHtml(existing ? existing.doi : '')}">
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" style="font-size:0.75rem">链接</label>
+          <input type="url" class="form-input" name="lf-lit-link-${rowId}" placeholder="https://..." value="${escapeHtml(existing ? existing.link : '')}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" style="font-size:0.75rem">关键词（输入后回车添加标签）</label>
+        <div class="keyword-tags" id="lf-kw-${rowId}">
+          ${((existing && existing.keywords) || []).map(k => `<span class="keyword-tag" data-kw="${escapeHtml(k)}">${escapeHtml(k)}<button type="button" data-lid="${rowId}" data-kw="${escapeHtml(k)}">${Icon.x}</button></span>`).join('')}
+        </div>
+        <input type="text" class="form-input" id="lf-kw-in-${rowId}" placeholder="输入关键词后按回车" style="margin-top:4px">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label" style="font-size:0.75rem">文字稿</label>
+        <textarea class="form-textarea" name="lf-lit-transcript-${rowId}" rows="3" placeholder="该文献汇报的文字稿（可选）">${escapeHtml(existing ? existing.transcript : '')}</textarea>
+      </div>`;
+
+    container.appendChild(block);
+    block.querySelector('.remove-lit-btn').addEventListener('click', () => block.remove());
+    this._bindKeywordTags(rowId);
+  }
+
+  async _bindLitFormSubmit(pid, meetingId) {
     const form = document.getElementById('lit-form');
-    const submitBtn = document.getElementById('submit-lit-btn');
+    const submitBtn = document.getElementById(`lf-submit-${pid}`);
+    const pptDataEl = document.getElementById(`lf-ppt-data-${pid}`);
+    const pptNameEl = document.getElementById(`lf-ppt-name2-${pid}`);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      const authorName = document.getElementById(`lit-author-name-${lid}`).value.trim();
-      const title = document.getElementById(`lit-title-${lid}`).value.trim();
+      const authorName = document.getElementById(`lf-author-${pid}`).value.trim();
+      const pptRaw = (pptDataEl?.value || '').trim();
+      const pptFileName = (pptNameEl?.value || '').trim();
 
       if (!authorName) { alert('请输入姓名'); return; }
-      if (!title) { alert('请输入文献标题'); return; }
+      if (!pptRaw) { alert('请上传 PPT / PDF'); return; }
+
+      const litRows = [];
+      document.querySelectorAll(`#lf-lit-container-${pid} .literature-block`).forEach(row => {
+        const rowId = row.dataset.rowId;
+        const title = (row.querySelector(`[name="lf-lit-title-${rowId}"]`)?.value || '').trim();
+        if (!title) return;
+        const kwTags = row.querySelectorAll(`#lf-kw-${rowId} .keyword-tag`);
+        const keywords = [...kwTags].map(t => t.dataset.kw).filter(Boolean);
+        litRows.push({
+          id: 'lr' + String(Date.now() + Math.random() * 1e6 | 0),
+          title,
+          authors: (row.querySelector(`[name="lf-lit-authors-${rowId}"]`)?.value || '').trim(),
+          journal: (row.querySelector(`[name="lf-lit-journal-${rowId}"]`)?.value || '').trim(),
+          doi: (row.querySelector(`[name="lf-lit-doi-${rowId}"]`)?.value || '').trim(),
+          link: (row.querySelector(`[name="lf-lit-link-${rowId}"]`)?.value || '').trim(),
+          keywords,
+          transcript: (row.querySelector(`[name="lf-lit-transcript-${rowId}"]`)?.value || '').trim(),
+          pptDataUrl: '',
+          pptFileName
+        });
+      });
+
+      if (litRows.length === 0) { alert('请至少添加一篇文献'); return; }
 
       const pw = sessionStorage.getItem('appPassword');
       if (!pw) {
@@ -1011,26 +935,45 @@ class MeetingApp {
 
         let participant = participants.find(p => p.name === authorName);
         if (!participant) {
-          participant = { id: String(Date.now()), name: authorName, literature: [] };
+          participant = { id: String(Date.now()), name: authorName, pptDataUrl: '', pptFileName: '', literature: [] };
           participants.push(participant);
         }
 
-        const litId = String(Date.now());
-        const kwTags = document.querySelectorAll(`#kw-tags-${lid} .keyword-tag`);
-        const keywords = [...kwTags].map(t => t.dataset.kw).filter(Boolean);
+        // Upload PPT if pending
+        let finalPptDataUrl = pptRaw;
+        if (pptRaw.startsWith('pending:')) {
+          const b64 = pptRaw.slice(8);
+          if (b64) {
+            try {
+              const result = await FileAPI.upload(b64, pptFileName, meetingId);
+              finalPptDataUrl = `repo:${result.sha}`;
+            } catch (err) {
+              if (b64.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
+                alert(`PPT 上传失败（${err.message || ''}），改为本地存储，关闭浏览器后可能丢失。`);
+                finalPptDataUrl = `local:${b64}`;
+              } else {
+                alert(`PPT 上传失败（${err.message || ''}）且文件偏大，本次不保存该附件。`);
+                finalPptDataUrl = '';
+              }
+            }
+          } else {
+            finalPptDataUrl = '';
+          }
+        }
 
-        const lit = {
-          id: litId,
-          title,
-          authors: document.getElementById(`lit-authors-${lid}`).value.trim(),
-          journal: document.getElementById(`lit-journal-${lid}`).value.trim(),
-          doi: document.getElementById(`lit-doi-${lid}`).value.trim(),
-          link: document.getElementById(`lit-link-${lid}`).value.trim(),
-          keywords,
-          transcript: document.getElementById(`lit-transcript-${lid}`).value.trim()
-        };
+        // Assign shared PPT to all new lit + existing lit of this participant
+        for (const lit of litRows) {
+          lit.pptDataUrl = finalPptDataUrl;
+          lit.pptFileName = pptFileName;
+        }
+        for (const lit of (participant.literature || [])) {
+          lit.pptDataUrl = finalPptDataUrl;
+          lit.pptFileName = pptFileName;
+        }
+        participant.pptDataUrl = finalPptDataUrl;
+        participant.pptFileName = pptFileName;
 
-        participant.literature.push(lit);
+        participant.literature.push(...litRows);
         await Storage.updateMeeting(meetingId, { ...meeting, participants });
 
         submitBtn.textContent = '已保存！';
@@ -1038,7 +981,7 @@ class MeetingApp {
       } catch (err) {
         alert('保存失败: ' + err.message);
         submitBtn.disabled = false;
-        submitBtn.textContent = `${Icon.check} 保存文献`;
+        submitBtn.textContent = Icon.check + ' 保存所有文献';
       }
     });
   }
@@ -1051,21 +994,17 @@ class MeetingApp {
       <a class="back-link" href="${editId ? '#meeting/' + editId : '#meeting-list'}">
         ${Icon.chevronLeft} ${editId ? '返回组会详情' : '返回组会列表'}
       </a>
-
       <div class="page-header fade-in">
         <h1>${editId ? '编辑组会' : '新建组会'}</h1>
-        <p>${editId ? '修改组会信息、参与者及文献记录' : '记录组会时间、参与者及每人分享的文献信息'}</p>
+        <p>${editId ? '修改组会信息' : '记录组会基本信息'}</p>
       </div>
-
       <div class="card fade-in">
         <div class="card-body">
           <div class="alert alert-info">
             ${Icon.info}
-            <span><strong>提示：</strong>文件上传后直存 GitHub（不经过 Vercel 中转），支持较大 PPT/PDF。多人协作场景下，建议每人单独添加自己的文献记录。</span>
+            <span><strong>提示：</strong>新建组会后，其他成员使用「上传我的文献」添加各自的 PPT 和文献。</span>
           </div>
-
           <form id="meeting-form">
-            <!-- Basic Info -->
             <div class="form-section">
               <div class="form-section-title">组会基本信息</div>
               <div class="form-row">
@@ -1083,17 +1022,7 @@ class MeetingApp {
                 <textarea class="form-textarea" id="f-notes" rows="2" placeholder="可选，如讨论主题、重要结论等">${escapeHtml(meeting ? meeting.notes : '')}</textarea>
               </div>
             </div>
-
-            <!-- Participants -->
-            <div class="form-section">
-              <div class="form-section-title">参与者与文献</div>
-              <div id="participants-container"></div>
-              <button type="button" class="btn btn-secondary" id="add-participant-btn" style="width:100%">
-                ${Icon.plus} 添加参与者
-              </button>
-            </div>
-
-            <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end">
+            <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end">
               <a href="${editId ? '#meeting/' + editId : '#meeting-list'}" class="btn btn-secondary">取消</a>
               <button type="submit" class="btn btn-primary btn-lg" id="form-submit-btn">
                 ${Icon.check} ${editId ? '保存修改' : '保存组会'}
@@ -1101,24 +1030,8 @@ class MeetingApp {
             </div>
           </form>
         </div>
-      </div>
-    `;
+      </div>`;
 
-    const participantsContainer = document.getElementById('participants-container');
-    const existingParticipants = meeting ? meeting.participants : [];
-
-    // Initialize with at least one empty participant if none exist
-    if (existingParticipants.length === 0) {
-      this._addParticipantBlock(participantsContainer, null);
-    } else {
-      existingParticipants.forEach(p => this._addParticipantBlock(participantsContainer, p));
-    }
-
-    document.getElementById('add-participant-btn').addEventListener('click', () => {
-      this._addParticipantBlock(participantsContainer, null);
-    });
-
-    // Form submit — upload pending files to GitHub before saving
     document.getElementById('meeting-form').addEventListener('submit', async e => {
       e.preventDefault();
       const submitBtn = document.getElementById('form-submit-btn');
@@ -1131,236 +1044,57 @@ class MeetingApp {
 
       const originalText = submitBtn.innerHTML;
       submitBtn.disabled = true;
-      submitBtn.innerHTML = `${Icon.upload} 上传文件中...`;
+      submitBtn.innerHTML = '保存中...';
 
-      // Pre-generate meeting ID for new meetings (so uploads use the real ID)
-      let targetId = editId || uuid();
-
-      const data = this._collectFormData();
-
-      // Upload pending participant PPTs to GitHub (直接 PUT，不经过 Vercel)
-      for (const p of (data.participants || [])) {
-        if (p.pptDataUrl && p.pptDataUrl.startsWith('pending:')) {
-          const base64Content = p.pptDataUrl.slice(8);
-          if (!base64Content) continue;
-          try {
-            const result = await FileAPI.upload(base64Content, p.pptFileName, targetId);
-            p.pptDataUrl = `repo:${result.sha}`;
-          } catch (err) {
-            if (base64Content.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
-              alert(`「${p.name}」的 PPT 上传失败（${err.message || ''}），将改为本地存储，关闭浏览器后可能丢失。`);
-              p.pptDataUrl = `local:${base64Content}`;
-            } else {
-              alert(`「${p.name}」的 PPT 上传失败（${err.message || ''}）且文件偏大，本次将不保存该附件。`);
-              p.pptDataUrl = '';
-              p.pptFileName = '';
-            }
-          }
-        }
-      }
+      const data = {
+        date: document.getElementById('f-date').value,
+        topic: document.getElementById('f-topic').value.trim(),
+        notes: document.getElementById('f-notes').value.trim(),
+        participants: meeting ? meeting.participants : []
+      };
 
       let ok;
       if (editId) {
         ok = await Storage.updateMeeting(editId, data);
         if (ok) location.hash = `#meeting/${editId}`;
       } else {
-        const meeting = {
-          id: targetId,
-          ...data,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        const saved = await Storage.addMeeting(meeting);
-        if (saved) {
-          location.hash = `#meeting/${saved.id}`;
-          ok = true;
-        } else {
-          ok = false;
-        }
+        const newMeeting = { id: uuid(), ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        const saved = await Storage.addMeeting(newMeeting);
+        if (saved) { location.hash = `#meeting/${saved.id}`; ok = true; }
+        else ok = false;
       }
 
-      if (ok === false) {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = originalText;
-      }
+      if (ok === false) { submitBtn.disabled = false; submitBtn.innerHTML = originalText; }
     });
   }
 
-  _addParticipantBlock(container, existing) {
-    const pid = existing ? existing.id : uuid();
-    const litData = existing ? existing.literature : [];
-    const existingPptDataUrl = existing ? existing.pptDataUrl : '';
-    const existingPptFileName = existing ? existing.pptFileName : '';
-    const hasExistingPpt = !!(existingPptDataUrl || existingPptFileName);
+  // ── Shared Keyword Tags ─────────────────────────────────────────────────────
+  _bindKeywordTags(lid) {
+    const kwInput = document.getElementById(`lf-kw-in-${lid}`) || document.getElementById(`kw-input-${lid}`);
+    const kwTags = document.getElementById(`lf-kw-${lid}`) || document.getElementById(`kw-tags-${lid}`);
+    if (!kwInput || !kwTags) return;
 
-    const block = document.createElement('div');
-    block.className = 'participant-block fade-in';
-    block.dataset.pid = pid;
-
-    block.innerHTML = `
-      <div class="participant-header">
-        <input type="text" class="form-input" name="p-name-${pid}" placeholder="参与者姓名（如：张三）" value="${escapeHtml(existing ? existing.name : '')}" required>
-        <button type="button" class="btn btn-danger btn-sm remove-participant-btn">${Icon.trash} 移除</button>
-      </div>
-
-      <!-- PPT / 演示文件（属于该参与者的全部文献） -->
-      <div class="form-section" style="padding-top:12px">
-        <div class="form-section-title" style="font-size:0.75rem">PPT / 演示文件（该参与者共享）</div>
-        <div class="file-upload-area" id="p-ppt-upload-area-${pid}">
-          <input type="file" id="p-ppt-file-${pid}" accept=".ppt,.pptx,.pdf,.png,.jpg,.jpeg,.gif,.webp,.pptm">
-          <div class="file-upload-icon">${Icon.upload}</div>
-          <div class="file-upload-text">
-            <strong>点击选择</strong> 或拖拽文件到此处<br>
-            <small>支持 PPT, PPTX, PDF（建议 &lt;5MB）</small>
-          </div>
-        </div>
-        <div id="p-ppt-uploaded-file-${pid}" class="file-uploaded" style="${hasExistingPpt ? '' : 'display:none'}">
-          ${Icon.check}
-          <span class="file-uploaded-name" id="p-ppt-uploaded-name-${pid}">${escapeHtml(existingPptFileName)}</span>
-          <button type="button" class="btn btn-ghost btn-sm" id="p-remove-ppt-${pid}" style="padding:2px 6px;color:var(--danger)">${Icon.x}</button>
-        </div>
-        <div class="upload-status" id="p-ppt-status-${pid}" style="display:none"></div>
-        <input type="hidden" id="p-ppt-data-${pid}" value="${escapeHtml(existingPptDataUrl)}">
-        <input type="hidden" id="p-ppt-name-${pid}" value="${escapeHtml(existingPptFileName)}">
-      </div>
-
-      <div class="participant-literature">
-        <div style="font-size:0.8125rem;font-weight:600;color:var(--primary);margin-bottom:10px">文献列表</div>
-        <div class="lit-blocks-container" data-pid="${pid}"></div>
-        <button type="button" class="btn btn-secondary btn-sm add-lit-btn" style="width:100%;margin-top:8px" data-pid="${pid}">
-          ${Icon.plus} 添加文献
-        </button>
-      </div>
-    `;
-
-    container.appendChild(block);
-
-    block.querySelector('.remove-participant-btn').addEventListener('click', () => {
-      block.remove();
-    });
-
-    block.querySelector('.add-lit-btn').addEventListener('click', () => {
-      this._addLiteratureBlock(block.querySelector('.lit-blocks-container'), null);
-    });
-
-    // 绑定参与者级别 PPT 上传
-    this._bindParticipantFileUpload(pid);
-
-    const litContainer = block.querySelector('.lit-blocks-container');
-    if (litData.length === 0) {
-      this._addLiteratureBlock(litContainer, null);
-    } else {
-      litData.forEach(l => this._addLiteratureBlock(litContainer, l));
-    }
-  }
-
-  _addLiteratureBlock(container, existing) {
-    const lid = existing ? existing.id : uuid();
-
-    const block = document.createElement('div');
-    block.className = 'literature-block fade-in';
-    block.dataset.lid = lid;
-
-    block.innerHTML = `
-      <div class="literature-block-header">
-        <input type="text" class="form-input" name="lit-title-${lid}" placeholder="文献标题（必填）" value="${escapeHtml(existing ? existing.title : '')}">
-        <button type="button" class="btn btn-ghost btn-sm remove-lit-btn" style="color:var(--danger);padding:6px">${Icon.x}</button>
-      </div>
-
-      <div class="form-row" style="margin-bottom:10px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label" style="font-size:0.75rem">作者</label>
-          <input type="text" class="form-input" name="lit-authors-${lid}" placeholder="作者姓名" value="${escapeHtml(existing ? existing.authors : '')}">
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label" style="font-size:0.75rem">期刊 / 来源</label>
-          <input type="text" class="form-input" name="lit-journal-${lid}" placeholder="期刊名称" value="${escapeHtml(existing ? existing.journal : '')}">
-        </div>
-      </div>
-
-      <div class="form-row" style="margin-bottom:10px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label" style="font-size:0.75rem">DOI</label>
-          <input type="text" class="form-input" name="lit-doi-${lid}" placeholder="10.xxxx/xxxxx" value="${escapeHtml(existing ? existing.doi : '')}">
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label" style="font-size:0.75rem">链接</label>
-          <input type="url" class="form-input" name="lit-link-${lid}" placeholder="https://..." value="${escapeHtml(existing ? existing.link : '')}">
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" style="font-size:0.75rem">关键词（输入后回车添加标签）</label>
-        <div class="keyword-tags" id="kw-tags-${lid}">
-          ${((existing && existing.keywords) || []).map(k => `
-            <span class="keyword-tag" data-kw="${escapeHtml(k)}">${escapeHtml(k)}<button type="button" data-lid="${lid}" data-kw="${escapeHtml(k)}">${Icon.x}</button></span>
-          `).join('')}
-        </div>
-        <input type="text" class="form-input" id="kw-input-${lid}" placeholder="输入关键词后按回车" style="margin-top:4px">
-      </div>
-
-      <div class="form-group" style="margin-bottom:0">
-        <label class="form-label" style="font-size:0.75rem">文字稿</label>
-        <textarea class="form-textarea" name="lit-transcript-${lid}" rows="4" placeholder="在此粘贴或输入文献汇报的文字稿内容...">${escapeHtml(existing ? existing.transcript : '')}</textarea>
-      </div>
-    `;
-
-    container.appendChild(block);
-
-    block.querySelector('.remove-lit-btn').addEventListener('click', () => block.remove());
-    this._bindKeywordTags(lid);
-  }
-
-  _collectFormData() {
-    const date = document.getElementById('f-date').value;
-    const topic = document.getElementById('f-topic').value.trim();
-    const notes = document.getElementById('f-notes').value.trim();
-
-    const participants = [];
-    document.querySelectorAll('.participant-block').forEach(block => {
-      const pid = block.dataset.pid;
-      const name = block.querySelector(`[name="p-name-${pid}"]`).value.trim();
-      if (!name) return;
-
-      // 参与者级别 PPT（共享给该参与者的全部文献）
-      const pptDataUrl = document.getElementById(`p-ppt-data-${pid}`).value || '';
-      let normalizedPpt = pptDataUrl;
-      if (pptDataUrl && !pptDataUrl.startsWith('local:') && !pptDataUrl.startsWith('repo:') && !pptDataUrl.startsWith('pending:')) {
-        if (pptDataUrl.includes(',')) {
-          normalizedPpt = `local:${pptDataUrl.split(',')[1]}`;
-        }
+    kwInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const kw = kwInput.value.trim();
+        if (!kw) return;
+        if ([...kwTags.querySelectorAll('.keyword-tag')].some(t => t.dataset.kw === kw)) { kwInput.value = ''; return; }
+        const tag = document.createElement('span');
+        tag.className = 'keyword-tag';
+        tag.dataset.kw = kw;
+        tag.innerHTML = `${escapeHtml(kw)}<button type="button" data-lid="${lid}" data-kw="${escapeHtml(kw)}">${Icon.x}</button>`;
+        kwTags.appendChild(tag);
+        kwInput.value = '';
       }
-      const pptFileName = document.getElementById(`p-ppt-name-${pid}`).value || '';
-
-      const literature = [];
-      block.querySelectorAll('.literature-block').forEach(lb => {
-        const lid = lb.dataset.lid;
-        const title = lb.querySelector(`[name="lit-title-${lid}"]`).value.trim();
-        if (!title) return;
-
-        const kwTags = lb.querySelectorAll(`#kw-tags-${lid} .keyword-tag`);
-        const keywords = [...kwTags].map(t => t.dataset.kw).filter(Boolean);
-
-        literature.push({
-          id: lid,
-          title,
-          authors: lb.querySelector(`[name="lit-authors-${lid}"]`).value.trim(),
-          journal: lb.querySelector(`[name="lit-journal-${lid}"]`).value.trim(),
-          doi: lb.querySelector(`[name="lit-doi-${lid}"]`).value.trim(),
-          link: lb.querySelector(`[name="lit-link-${lid}"]`).value.trim(),
-          keywords,
-          transcript: lb.querySelector(`[name="lit-transcript-${lid}"]`).value.trim()
-        });
-      });
-
-      participants.push({ id: pid, name, pptDataUrl: normalizedPpt, pptFileName, literature });
     });
 
-    return { date, topic, notes, participants };
+    kwTags.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-lid]');
+      if (btn) { const tag = btn.closest('.keyword-tag'); if (tag) tag.remove(); }
+    });
   }
 }
 
 // ─── Boot ──────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  new MeetingApp();
-});
+document.addEventListener('DOMContentLoaded', () => { new MeetingApp(); });
