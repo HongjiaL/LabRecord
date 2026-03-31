@@ -37,6 +37,21 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ─── PPT Download Button Helper ────────────────────────────────────────────
+function _pptDownloadBtn(raw, fileName, meetingId) {
+  if (!raw) return '';
+  if (raw.startsWith('local:')) {
+    const mimeType = _getMimeType(fileName);
+    const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
+    return `<a href="${dataUrl}" download="${escapeHtml(fileName)}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+  }
+  if (raw.startsWith('repo:')) {
+    return `<a href="#" class="btn btn-accent btn-sm repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(fileName)}">${Icon.paperclip} 下载PPT</a>`;
+  }
+  return `<a href="${escapeHtml(raw)}" download="${escapeHtml(fileName)}" class="btn btn-accent btn-sm">${Icon.paperclip} 下载PPT</a>`;
+}
+
+// ─── MIME Type ─────────────────────────────────────────────────────────────
 function _getMimeType(fileName) {
   const ext = (fileName || '').split('.').pop().toLowerCase();
   const map = {
@@ -694,6 +709,7 @@ class MeetingApp {
               ${lit.authors ? `<div class="literature-detail-authors">${escapeHtml(lit.authors)}${lit.journal ? ' — ' + escapeHtml(lit.journal) : ''}</div>` : ''}
               ${(lit.keywords || []).length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">${lit.keywords.map(k => `<span class="tag">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
               <div class="literature-detail-actions">
+                ${lit.pptDataUrl ? _pptDownloadBtn(lit.pptDataUrl, lit.pptFileName || 'PPT文件', meetingId) : ''}
                 ${lit.link ? `<a href="${escapeHtml(lit.link)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.arrowRight} 访问链接</a>` : ''}
                 ${lit.doi ? `<a href="https://doi.org/${escapeHtml(lit.doi)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${Icon.fileText} DOI</a>` : ''}
               </div>
