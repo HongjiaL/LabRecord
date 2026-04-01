@@ -119,7 +119,8 @@ async function handleUploadUrl(query) {
         ok: true,
         uploadUrl,
         token,
-        uploadDir: dirPath
+        uploadDir: dirPath,
+        seafileOrigin: SEAFILE_BASE.replace('/api2', '')
       }
     };
   } catch (err) {
