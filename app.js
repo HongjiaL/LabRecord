@@ -69,23 +69,18 @@ function _getMimeType(fileName) {
   return map[ext] || 'application/octet-stream';
 }
 
-const MAX_LOCAL_FALLBACK_B64_CHARS = 2_800_000;
-
 // ─── File API ──────────────────────────────────────────────────────────────
 const FileAPI = {
   async upload(base64Content, fileName, meetingId) {
-    // ── 优先使用南大云盘（管理员配置，全员共用）───────────────────────────
+    // ── 使用南大云盘（管理员配置，全员共用）───────────────────────────────
     try {
       const result = await window.SeafileStorage.upload(fileName, meetingId, base64Content);
       if (result.success) {
-        return { sha: `seafile:${result.path}` };
+        return { success: true, path: result.path };
       }
-      // 云盘上传失败不抛错，降级到本地存储
-      console.warn('[FileAPI.upload] Seafile upload failed, falling back to local:', result.error);
-      return { sha: `local:${base64Content}` };
+      return { success: false, error: result.error || '上传失败' };
     } catch (err) {
-      console.warn('[FileAPI.upload] Seafile call failed, falling back to local:', err);
-      return { sha: `local:${base64Content}` };
+      return { success: false, error: err.message || '网络错误' };
     }
   },
 
@@ -1065,15 +1060,15 @@ class MeetingApp {
           if (b64) {
             try {
               const result = await FileAPI.upload(b64, pptFileName, meetingId);
-              finalPptDataUrl = `repo:${result.sha}`;
-            } catch (err) {
-              if (b64.length <= MAX_LOCAL_FALLBACK_B64_CHARS) {
-                alert(`PPT 上传失败（${err.message || ''}），改为本地存储，关闭浏览器后可能丢失。`);
-                finalPptDataUrl = `local:${b64}`;
+              if (result.success) {
+                finalPptDataUrl = result.path;
               } else {
-                alert(`PPT 上传失败（${err.message || ''}）且文件偏大，本次不保存该附件。`);
+                alert(`PPT 上传到云盘失败：${result.error || '未知错误'}。本次保存将不包含该 PPT 附件。`);
                 finalPptDataUrl = '';
               }
+            } catch (err) {
+              alert(`PPT 上传到云盘失败（${err.message || ''}）。本次保存将不包含该 PPT 附件。`);
+              finalPptDataUrl = '';
             }
           } else {
             finalPptDataUrl = '';
