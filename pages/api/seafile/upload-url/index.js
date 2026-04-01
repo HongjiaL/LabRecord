@@ -26,19 +26,8 @@ export default async function handler(req, res) {
       { headers: { 'Authorization': `Token ${token}`, 'Accept': 'application/json' } }
     );
     if (!checkRes.ok) {
-      const dirName = dirPath.split('/').filter(Boolean).pop();
-      await fetch(
-        `${SEAFILE_BASE}/repos/${repoId}/dir/?p=${encodeURIComponent(dirPath)}`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Token ${token}`,
-            'Content-Type': 'application/json; charset=utf-8',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({ operation: 'mkdir', dir_name: dirName })
-        }
-      );
+      const errText = await checkRes.text();
+      return res.status(checkRes.status).json({ ok: false, error: `检查目录失败 (HTTP ${checkRes.status}): ${errText}` });
     }
 
     // 获取 Seafile 上传链接
