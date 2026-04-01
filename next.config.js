@@ -1,11 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
-  // SPA: 所有页面都由 index.html（hash 路由）接管
+  // 明确排除 api/ 目录中的 .js 文件，避免 TypeScript/Webpack 处理
+  webpack: (config, { isServer }) => {
+    // pages/api/ 目录由 Next.js 直接处理为 serverless functions
+    return config;
+  },
   async rewrites() {
     return [
       {
-        source: '/((?!api|_next/static|_next/image|favicon.ico|main.css|settings-modal.js|app.js).*)',
+        // 非 Next.js 保留路径的请求都交给静态 index.html（SPA）
+        source: '/((?!api|_next|_ipc).*)',
         destination: '/index.html',
       },
     ];
