@@ -9,8 +9,7 @@ const SEAFILE_ICONS = {
   cloud: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>`,
 }
 
-// ─── Seafile Storage — 通过 Vercel API 代理，避免浏览器跨域限制 ────────────────
-// 所有请求先发给 /api/seafile/，由 Vercel 服务端代为请求南大云盘
+// ─── Seafile Storage — 通过 Vercel API 代理 + Token 认证 ────────────────────
 const SeafileStorage = {
   getConfig() {
     try { return JSON.parse(localStorage.getItem('seafileConfig') || 'null') }
@@ -25,73 +24,51 @@ const SeafileStorage = {
     localStorage.removeItem('seafileConfig')
   },
 
-  // 测试连接 — 通过 Vercel 代理
-  async testConnection(cfg) {
+  // 测试连接
+  async testConnection(account, token) {
     try {
-      const encoded = btoa(JSON.stringify(cfg))
-      const res = await fetch('/api/seafile/test', {
-        headers: {
-          'X-Seafile-Config': encoded,
-          'Accept': 'application/json'
-        }
+      const res = await fetch(`/api/seafile/test?action=test&account=${encodeURIComponent(account)}&token=${encodeURIComponent(token)}`, {
+        headers: { 'Accept': 'application/json' }
       })
       const data = await res.json()
-      if (!res.ok) {
-        return { ok: false, error: data.error || `连接失败 (HTTP ${res.status})` }
-      }
+      if (!res.ok) return { ok: false, error: data.error || `连接失败 (HTTP ${res.status})` }
       return { ok: true, repos: data.repos }
     } catch (err) {
       return { ok: false, error: err.message || '网络错误' }
     }
   },
 
-  buildFilePath(fileName, meetingId) {
-    return `/${meetingId}/${fileName}`
-  },
-
-  // 上传文件 — 通过 Vercel 代理
+  // 上传
   async upload(cfg, fileName, meetingId, base64Content) {
     try {
-      const encoded = btoa(JSON.stringify(cfg))
       const res = await fetch('/api/seafile/upload', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Seafile-Config': encoded
-        },
-        body: JSON.stringify({ fileName, meetingId, base64Content })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: cfg.token,
+          repoId: cfg.repoId,
+          fileName,
+          meetingId,
+          base64Content
+        })
       })
       const data = await res.json()
-      if (!res.ok) {
-        return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` }
-      }
-      return { success: data.success !== false, path: data.path || this.buildFilePath(fileName, meetingId) }
+      if (!res.ok) return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` }
+      return { success: data.success !== false, path: data.path || `/${meetingId}/${fileName}` }
     } catch (err) {
       return { success: false, error: err.message || '网络错误' }
     }
   },
 
-  // 下载文件 — 通过 Vercel 代理
+  // 下载
   async download(cfg, fileName, meetingId) {
     try {
-      const encoded = btoa(JSON.stringify(cfg))
       const res = await fetch(
-        `/api/seafile/download?fileName=${encodeURIComponent(fileName)}&meetingId=${encodeURIComponent(meetingId)}`,
-        {
-          headers: {
-            'X-Seafile-Config': encoded,
-            'Accept': 'application/json'
-          }
-        }
+        `/api/seafile/download?token=${encodeURIComponent(cfg.token)}&repoId=${encodeURIComponent(cfg.repoId)}&fileName=${encodeURIComponent(fileName)}&meetingId=${encodeURIComponent(meetingId)}`,
+        { headers: { 'Accept': 'application/json' } }
       )
       const data = await res.json()
-      if (!res.ok) {
-        return {
-          ok: false,
-          error: data.error || `下载失败 (HTTP ${res.status})`,
-          status: res.status
-        }
-      }
+      if (!res.ok) return { ok: false, error: data.error || `下载失败 (HTTP ${res.status})`, status: res.status }
       return { ok: true, content: data.content }
     } catch (err) {
       return { ok: false, error: err.message || '网络错误' }
@@ -99,7 +76,7 @@ const SeafileStorage = {
   }
 }
 
-// ─── Settings Modal Manager ───────────────────────────────────────────────────
+// ─── Settings Modal ─────────────────────────────────────────────────────────
 let _onSavedCallback = null
 let _currentRepos = []
 let _settingsStatus = { type: 'idle', msg: '' }
@@ -107,8 +84,8 @@ let _settingsStatus = { type: 'idle', msg: '' }
 function renderSettingsModalContent() {
   const cfg = SeafileStorage.getConfig()
   const existing = !!cfg
-  let reposHtml = ''
 
+  let reposHtml = ''
   if (_currentRepos.length > 0) {
     reposHtml = `
       <div class="form-group">
@@ -117,10 +94,7 @@ function renderSettingsModalContent() {
           <option value="">请选择...</option>
           ${_currentRepos.map(r => `<option value="${r.id}" ${cfg?.repoId === r.id ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
         </select>
-        <div class="form-hint">
-          PPT 文件将存储在该资料库中。建议创建一个专用资料库（如「组会PPT」），
-          每个组会的数据会存放在以组会ID命名的子文件夹中。
-        </div>
+        <div class="form-hint">每个组会的数据会存放在以组会ID命名的子文件夹中。</div>
       </div>`
   }
 
@@ -138,17 +112,17 @@ function renderSettingsModalContent() {
   modalBody.innerHTML = `
     ${alertHtml}
     <div class="form-group">
-      <label class="form-label">南大学工号 <span class="required">*</span></label>
-      <input type="text" class="form-input" id="sf-username" placeholder="如：0123456@nju.edu.cn" value="${escapeHtml(cfg?.username || '')}" autocomplete="off" style="font-size:0.875rem">
+      <label class="form-label">南大账户 <span class="required">*</span></label>
+      <input type="text" class="form-input" id="sf-account" placeholder="如：0123456@nju.edu.cn" value="${escapeHtml(cfg?.account || '')}" autocomplete="off" style="font-size:0.875rem">
       <div class="form-hint">格式：学工号@nju.edu.cn（如 0123456@nju.edu.cn）</div>
     </div>
     <div class="form-group">
-      <label class="form-label">WebDAV 密码 <span class="required">*</span></label>
-      <input type="password" class="form-input" id="sf-password" placeholder="南大云盘 WebDAV 独立密码" autocomplete="new-password" style="font-size:0.875rem">
+      <label class="form-label">API Token <span class="required">*</span></label>
+      <input type="password" class="form-input" id="sf-token" placeholder="从「账户设置 → API Token」获取" autocomplete="new-password" style="font-size:0.875rem">
+      ${cfg?.token ? '<div class="form-hint" style="color:#38A169">已配置 Token（不显示）</div>' : ''}
       <div class="form-hint">
-        WebDAV 独立密码不是统一身份认证密码。请在
-        <a href="https://box.nju.edu.cn" target="_blank" rel="noopener noreferrer" style="color:var(--primary-light)">box.nju.edu.cn</a>
-        的「账户设置 → 通用设置 → WebDAV 密码」中生成。
+        请在 <a href="https://box.nju.edu.cn" target="_blank" rel="noopener noreferrer" style="color:var(--primary-light)">box.nju.edu.cn</a>
+        的「账户设置 → API Token」页面生成，复制生成的 Token 填入。
       </div>
     </div>
     ${reposHtml}
@@ -159,45 +133,41 @@ function renderSettingsModalContent() {
     </div>`
 
   document.getElementById('sf-test').addEventListener('click', handleTest)
-  if (document.getElementById('sf-save')) {
-    document.getElementById('sf-save').addEventListener('click', handleSave)
-  }
-  if (document.getElementById('sf-disconnect')) {
-    document.getElementById('sf-disconnect').addEventListener('click', handleDisconnect)
-  }
+  if (document.getElementById('sf-save')) document.getElementById('sf-save').addEventListener('click', handleSave)
+  if (document.getElementById('sf-disconnect')) document.getElementById('sf-disconnect').addEventListener('click', handleDisconnect)
 }
 
 async function handleTest() {
-  const username = document.getElementById('sf-username')?.value.trim()
-  const password = document.getElementById('sf-password')?.value
-  if (!username || !password) {
-    _settingsStatus = { type: 'error', msg: '请输入用户名和密码' }
+  const account = document.getElementById('sf-account')?.value.trim()
+  const token = document.getElementById('sf-token')?.value
+  if (!account || !token) {
+    _settingsStatus = { type: 'error', msg: '请输入账户和 Token' }
     renderSettingsModalContent()
     return
   }
   _settingsStatus = { type: 'loading', msg: '正在连接南大云盘...' }
   renderSettingsModalContent()
-  const result = await SeafileStorage.testConnection({ username, password, repoId: '', folder: '' })
+  const result = await SeafileStorage.testConnection(account, token)
   if (result.ok && result.repos) {
     _currentRepos = result.repos
     _settingsStatus = { type: 'success', msg: `连接成功！找到 ${result.repos.length} 个资料库，请选择存储位置后保存。` }
   } else {
     _currentRepos = []
-    _settingsStatus = { type: 'error', msg: result.error || '连接失败，请检查用户名和密码' }
+    _settingsStatus = { type: 'error', msg: result.error || '连接失败，请检查 Token' }
   }
   renderSettingsModalContent()
 }
 
 function handleSave() {
-  const username = document.getElementById('sf-username')?.value.trim()
-  const password = document.getElementById('sf-password')?.value
+  const account = document.getElementById('sf-account')?.value.trim()
+  const token = document.getElementById('sf-token')?.value
   const repoId = document.getElementById('sf-repo-select')?.value
-  if (!username || !password || !repoId) {
+  if (!account || !token || !repoId) {
     _settingsStatus = { type: 'error', msg: '请完整填写信息并选择一个资料库' }
     renderSettingsModalContent()
     return
   }
-  SeafileStorage.saveConfig({ username, password, repoId, folder: '' })
+  SeafileStorage.saveConfig({ account, token, repoId })
   _settingsStatus = { type: 'success', msg: '配置已保存！' }
   renderSettingsModalContent()
   updateStorageIndicator(true)
@@ -218,8 +188,8 @@ function openSettingsModal(onSaved) {
   _settingsStatus = { type: 'idle', msg: '' }
   const cfg = SeafileStorage.getConfig()
   if (cfg) {
-    const usernameEl = document.getElementById('sf-username')
-    if (usernameEl) usernameEl.value = cfg.username
+    const el = document.getElementById('sf-account')
+    if (el) el.value = cfg.account
   }
   renderSettingsModalContent()
   document.getElementById('settings-modal').classList.add('active')
@@ -230,41 +200,35 @@ function closeSettingsModal() {
 }
 
 function updateStorageIndicator(connected) {
-  const indicator = document.getElementById('storage-indicator')
-  if (!indicator) return
-  if (connected) {
-    indicator.innerHTML = `<span style="color:#38A169;font-size:0.7rem;display:flex;align-items:center;gap:3px">${SEAFILE_ICONS.check}<span>云盘已连接</span></span>`
-  } else {
-    indicator.innerHTML = `<span style="color:var(--text-muted);font-size:0.7rem;display:flex;align-items:center;gap:3px">${SEAFILE_ICONS.cloud}<span>本地存储</span></span>`
-  }
+  const el = document.getElementById('storage-indicator')
+  if (!el) return
+  el.innerHTML = connected
+    ? `<span style="color:#38A169;font-size:0.7rem;display:flex;align-items:center;gap:3px">${SEAFILE_ICONS.check}<span>云盘已连接</span></span>`
+    : `<span style="color:var(--text-muted);font-size:0.7rem;display:flex;align-items:center;gap:3px">${SEAFILE_ICONS.cloud}<span>本地存储</span></span>`
 }
 
 function init() {
   if (document.getElementById('settings-modal')) return
-
   const navActions = document.querySelector('.navbar-actions')
-  if (navActions) {
-    const indicator = document.createElement('span')
-    indicator.id = 'storage-indicator'
-    indicator.style.display = 'inline-flex'
-    indicator.style.alignItems = 'center'
-    navActions.insertBefore(indicator, navActions.firstChild)
+  if (!navActions) return
 
-    const btn = document.createElement('button')
-    btn.className = 'btn btn-ghost btn-sm'
-    btn.id = 'btn-settings'
-    btn.title = '存储设置'
-    btn.innerHTML = `${SEAFILE_ICONS.settings} 存储设置`
-    btn.style.display = 'flex'
-    btn.style.alignItems = 'center'
-    btn.style.gap = '4px'
-    navActions.insertBefore(btn, navActions.firstChild)
+  const indicator = document.createElement('span')
+  indicator.id = 'storage-indicator'
+  indicator.style.display = 'inline-flex'
+  indicator.style.alignItems = 'center'
+  navActions.insertBefore(indicator, navActions.firstChild)
 
-    btn.addEventListener('click', () => openSettingsModal())
+  const btn = document.createElement('button')
+  btn.className = 'btn btn-ghost btn-sm'
+  btn.id = 'btn-settings'
+  btn.title = '存储设置'
+  btn.innerHTML = `${SEAFILE_ICONS.settings} 存储设置`
+  btn.style.cssText = 'display:flex;align-items:center;gap:4px'
+  navActions.insertBefore(btn, navActions.firstChild)
+  btn.addEventListener('click', () => openSettingsModal())
 
-    const cfg = SeafileStorage.getConfig()
-    updateStorageIndicator(!!cfg)
-  }
+  const cfg = SeafileStorage.getConfig()
+  updateStorageIndicator(!!cfg)
 
   const container = document.getElementById('app-root')
   if (container) {
@@ -275,14 +239,10 @@ function init() {
             <h2>${SEAFILE_ICONS.cloud} 南大云盘存储设置</h2>
             <button class="btn btn-ghost btn-sm" id="sf-close">${SEAFILE_ICONS.x}</button>
           </div>
-          <div class="modal-body" id="sf-modal-body">
-          </div>
+          <div class="modal-body" id="sf-modal-body"></div>
         </div>
       </div>`)
-
-    document.getElementById('settings-modal').addEventListener('click', (e) => {
-      if (e.target.id === 'settings-modal') closeSettingsModal()
-    })
+    document.getElementById('settings-modal').addEventListener('click', e => { if (e.target.id === 'settings-modal') closeSettingsModal() })
     document.getElementById('sf-close').addEventListener('click', closeSettingsModal)
   }
 }
