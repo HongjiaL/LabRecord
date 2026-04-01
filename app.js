@@ -46,7 +46,7 @@ function _pptDownloadBtn(raw, fileName, meetingId) {
     const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
     return `<a href="${dataUrl}" download="${escapeHtml(fileName)}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
   }
-  if (raw.startsWith('repo:')) {
+  if (raw.startsWith('repo:') || raw.startsWith('seafile:')) {
     return `<a href="#" class="ppt-download-btn repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(fileName)}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
   }
   return `<a href="${escapeHtml(raw)}" download="${escapeHtml(fileName)}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
@@ -74,6 +74,23 @@ const MAX_LOCAL_FALLBACK_B64_CHARS = 2_800_000;
 // ─── File API ──────────────────────────────────────────────────────────────
 const FileAPI = {
   async upload(base64Content, fileName, meetingId) {
+    // ── Priority 1: 南大云盘（用户已配置）──────────────────────────────
+    const seafileConfig = (window.SeafileStorage && window.SeafileStorage.getConfig())
+      ? window.SeafileStorage.getConfig()
+      : null;
+
+    if (seafileConfig) {
+      const result = await window.SeafileStorage.upload(seafileConfig, fileName, meetingId, base64Content);
+      if (result.success) {
+        // 标记为 seafile 存储，存储 path（不含 repoId），下载时按需查找
+        return { sha: `seafile:${result.path}` };
+      }
+      // 云盘上传失败不抛错，降级到本地存储
+      console.warn('[FileAPI.upload] Seafile upload failed, falling back to local:', result.error);
+      return { sha: `local:${base64Content}` };
+    }
+
+    // ── Priority 2: GitHub（原有逻辑）──────────────────────────────────
     const meta = await fetch('/api/files/upload', {
       method: 'POST',
       headers: {
@@ -114,12 +131,34 @@ const FileAPI = {
   },
 
   async download(fileName, meetingId) {
-    const res = await fetch(`/api/files/download?meetingId=${encodeURIComponent(meetingId)}&fileName=${encodeURIComponent(fileName)}`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return { ok: false, error: err.error || `HTTP ${res.status}`, status: res.status };
+    // 优先尝试 GitHub API
+    try {
+      const res = await fetch(`/api/files/download?meetingId=${encodeURIComponent(meetingId)}&fileName=${encodeURIComponent(fileName)}`);
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+      if (res.status !== 404) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, error: err.error || `HTTP ${res.status}`, status: res.status };
+      }
+      // 404 → GitHub 上没有，尝试云盘
+    } catch (_) { /* fall through */ }
+
+    // ── 降级：南大云盘 ────────────────────────────────────────────────
+    const seafileConfig = (window.SeafileStorage && window.SeafileStorage.getConfig())
+      ? window.SeafileStorage.getConfig()
+      : null;
+
+    if (seafileConfig) {
+      const result = await window.SeafileStorage.download(seafileConfig, fileName, meetingId);
+      if (result.ok) {
+        return { ok: true, content: result.content };
+      }
+      return { ok: false, error: result.error || '云盘下载失败', status: 404 };
     }
-    return await res.json();
+
+    return { ok: false, error: '文件未找到', status: 404 };
   }
 };
 
