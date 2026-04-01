@@ -138,20 +138,23 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // 解析 path（去掉 query string）来判断路由
+  const pathname = (req.url || '').split('?')[0];
+
   // ── GET /api/seafile/test?token=xxx ────────────────────────────────────
-  if (req.method === 'GET' && req.query.action === 'test') {
+  if (req.method === 'GET' && pathname.endsWith('/test')) {
     const result = await handleTest(req.query);
     return res.status(result.status).json(result.body);
   }
 
   // ── GET /api/seafile/download?token=...&repoId=...&fileName=...&meetingId=... ──
-  if (req.method === 'GET' && req.query.fileName && req.query.meetingId) {
+  if (req.method === 'GET' && pathname.endsWith('/download') && req.query.fileName && req.query.meetingId) {
     const result = await handleDownload(req.query);
     return res.status(result.status).json(result.body);
   }
 
   // ── POST /api/seafile/upload ────────────────────────────────────────────
-  if (req.method === 'POST') {
+  if (req.method === 'POST' && pathname.endsWith('/upload')) {
     const result = await handleUpload(req.body || {});
     return res.status(result.status).json(result.body);
   }
