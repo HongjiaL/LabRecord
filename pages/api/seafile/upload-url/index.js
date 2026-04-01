@@ -47,9 +47,17 @@ export default async function handler(req, res) {
       { headers: { 'Authorization': `Token ${token}`, 'Accept': 'application/json' } }
     );
     if (!linkRes.ok) {
-      return res.status(linkRes.status).json({ ok: false, error: `获取上传链接失败 (HTTP ${linkRes.status})` });
+      const errText = await linkRes.text();
+      return res.status(linkRes.status).json({ ok: false, error: `获取上传链接失败 (HTTP ${linkRes.status}): ${errText}` });
     }
-    let uploadUrl = await linkRes.json();
+    let uploadUrl;
+    try {
+      const raw = await linkRes.json();
+      uploadUrl = raw;
+    } catch {
+      const errText = await linkRes.text();
+      return res.status(500).json({ ok: false, error: `Seafile 返回了非 JSON 响应 (HTTP ${linkRes.status}): ${errText.slice(0, 200)}` });
+    }
     if (!uploadUrl.startsWith('http')) {
       uploadUrl = SEAFILE_BASE.replace('/api2', '') + uploadUrl;
     }
