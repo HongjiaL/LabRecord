@@ -9,10 +9,8 @@ const SEAFILE_ICONS = {
   cloud: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>`,
 }
 
-// ─── Seafile Storage Client (pure JS, no build step) ────────────────────────
-const SEAFILE_API_BASE = 'https://box.nju.edu.cn/api2'
-const SEAFILE_WEBDAV_BASE = 'https://box.nju.edu.cn/seafdav'
-
+// ─── Seafile Storage — 通过 Vercel API 代理，避免浏览器跨域限制 ────────────────
+// 所有请求先发给 /api/seafile/，由 Vercel 服务端代为请求南大云盘
 const SeafileStorage = {
   getConfig() {
     try { return JSON.parse(localStorage.getItem('seafileConfig') || 'null') }
@@ -27,18 +25,21 @@ const SeafileStorage = {
     localStorage.removeItem('seafileConfig')
   },
 
+  // 测试连接 — 通过 Vercel 代理
   async testConnection(cfg) {
     try {
-      const creds = btoa(`${cfg.username}:${cfg.password}`)
-      const res = await fetch(`${SEAFILE_API_BASE}/repos/`, {
-        headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' }
+      const encoded = btoa(JSON.stringify(cfg))
+      const res = await fetch('/api/seafile/test', {
+        headers: {
+          'X-Seafile-Config': encoded,
+          'Accept': 'application/json'
+        }
       })
-      if (!res.ok) {
-        const text = await res.text()
-        return { ok: false, error: `连接失败 (HTTP ${res.status}): ${text}` }
-      }
       const data = await res.json()
-      return { ok: true, repos: data.map(r => ({ id: r.id, name: r.name })) }
+      if (!res.ok) {
+        return { ok: false, error: data.error || `连接失败 (HTTP ${res.status})` }
+      }
+      return { ok: true, repos: data.repos }
     } catch (err) {
       return { ok: false, error: err.message || '网络错误' }
     }
@@ -48,76 +49,50 @@ const SeafileStorage = {
     return `/${meetingId}/${fileName}`
   },
 
-  // Upload: two-step Seafile API
+  // 上传文件 — 通过 Vercel 代理
   async upload(cfg, fileName, meetingId, base64Content) {
     try {
-      const creds = btoa(`${cfg.username}:${cfg.password}`)
-      const dirPath = `/${meetingId}`
-
-      // Step 1: get upload link
-      const linkRes = await fetch(
-        `${SEAFILE_API_BASE}/repos/${cfg.repoId}/upload-link/?p=${encodeURIComponent(dirPath)}`,
-        { headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/json' } }
-      )
-      if (!linkRes.ok) {
-        const text = await linkRes.text()
-        return { success: false, error: `获取上传链接失败: HTTP ${linkRes.status} ${text}` }
-      }
-      const uploadUrl = await linkRes.json()
-
-      // Step 2: upload via multipart form
-      const binary = atob(base64Content)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-      const blob = new Blob([bytes])
-
-      const formData = new FormData()
-      formData.append('file', blob, fileName)
-      formData.append('parent_dir', dirPath)
-      formData.append('replace', '1')
-      formData.append('ret-json', '1')
-
-      const uploadRes = await fetch(uploadUrl, {
+      const encoded = btoa(JSON.stringify(cfg))
+      const res = await fetch('/api/seafile/upload', {
         method: 'POST',
-        headers: { 'Authorization': `Basic ${creds}` },
-        body: formData
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Seafile-Config': encoded
+        },
+        body: JSON.stringify({ fileName, meetingId, base64Content })
       })
-
-      if (!uploadRes.ok) {
-        const text = await uploadRes.text()
-        return { success: false, error: `上传失败: HTTP ${uploadRes.status} ${text}` }
+      const data = await res.json()
+      if (!res.ok) {
+        return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` }
       }
-
-      const result = await uploadRes.json()
-      return result.success
-        ? { success: true, path: this.buildFilePath(fileName, meetingId) }
-        : { success: false, error: JSON.stringify(result) }
+      return { success: data.success !== false, path: data.path || this.buildFilePath(fileName, meetingId) }
     } catch (err) {
       return { success: false, error: err.message || '网络错误' }
     }
   },
 
-  // Download via WebDAV
+  // 下载文件 — 通过 Vercel 代理
   async download(cfg, fileName, meetingId) {
     try {
-      const creds = btoa(`${cfg.username}:${cfg.password}`)
-      const filePath = this.buildFilePath(fileName, meetingId)
-
-      const res = await fetch(`${SEAFILE_WEBDAV_BASE}${filePath}`, {
-        headers: { 'Authorization': `Basic ${creds}`, 'Accept': 'application/octet-stream' }
-      })
-
+      const encoded = btoa(JSON.stringify(cfg))
+      const res = await fetch(
+        `/api/seafile/download?fileName=${encodeURIComponent(fileName)}&meetingId=${encodeURIComponent(meetingId)}`,
+        {
+          headers: {
+            'X-Seafile-Config': encoded,
+            'Accept': 'application/json'
+          }
+        }
+      )
+      const data = await res.json()
       if (!res.ok) {
         return {
           ok: false,
-          error: `文件不存在或无权限访问: HTTP ${res.status}`,
+          error: data.error || `下载失败 (HTTP ${res.status})`,
           status: res.status
         }
       }
-
-      const arrayBuffer = await res.arrayBuffer()
-      const binary = String.fromCharCode(...new Uint8Array(arrayBuffer))
-      return { ok: true, content: btoa(binary) }
+      return { ok: true, content: data.content }
     } catch (err) {
       return { ok: false, error: err.message || '网络错误' }
     }
@@ -183,7 +158,6 @@ function renderSettingsModalContent() {
       ${_currentRepos.length > 0 ? `<button class="btn btn-primary btn-sm" id="sf-save">${SEAFILE_ICONS.check} 保存配置</button>` : ''}
     </div>`
 
-  // Bind events
   document.getElementById('sf-test').addEventListener('click', handleTest)
   if (document.getElementById('sf-save')) {
     document.getElementById('sf-save').addEventListener('click', handleSave)
@@ -226,7 +200,6 @@ function handleSave() {
   SeafileStorage.saveConfig({ username, password, repoId, folder: '' })
   _settingsStatus = { type: 'success', msg: '配置已保存！' }
   renderSettingsModalContent()
-  // Show connected indicator
   updateStorageIndicator(true)
   if (_onSavedCallback) _onSavedCallback()
 }
@@ -245,7 +218,8 @@ function openSettingsModal(onSaved) {
   _settingsStatus = { type: 'idle', msg: '' }
   const cfg = SeafileStorage.getConfig()
   if (cfg) {
-    document.getElementById('sf-username').value = cfg.username
+    const usernameEl = document.getElementById('sf-username')
+    if (usernameEl) usernameEl.value = cfg.username
   }
   renderSettingsModalContent()
   document.getElementById('settings-modal').classList.add('active')
@@ -265,14 +239,17 @@ function updateStorageIndicator(connected) {
   }
 }
 
-// Initialize: inject HTML into index.html
 function init() {
-  // Already initialized
   if (document.getElementById('settings-modal')) return
 
-  // Inject settings button into navbar
   const navActions = document.querySelector('.navbar-actions')
   if (navActions) {
+    const indicator = document.createElement('span')
+    indicator.id = 'storage-indicator'
+    indicator.style.display = 'inline-flex'
+    indicator.style.alignItems = 'center'
+    navActions.insertBefore(indicator, navActions.firstChild)
+
     const btn = document.createElement('button')
     btn.className = 'btn btn-ghost btn-sm'
     btn.id = 'btn-settings'
@@ -283,20 +260,12 @@ function init() {
     btn.style.gap = '4px'
     navActions.insertBefore(btn, navActions.firstChild)
 
-    // Storage indicator
-    const indicator = document.createElement('span')
-    indicator.id = 'storage-indicator'
-    indicator.style.display = 'inline-flex'
-    indicator.style.alignItems = 'center'
-    navActions.insertBefore(indicator, navActions.firstChild)
-
     btn.addEventListener('click', () => openSettingsModal())
 
     const cfg = SeafileStorage.getConfig()
     updateStorageIndicator(!!cfg)
   }
 
-  // Inject modal HTML before app-root
   const container = document.getElementById('app-root')
   if (container) {
     container.insertAdjacentHTML('beforebegin', `
@@ -320,5 +289,4 @@ function init() {
 
 document.addEventListener('DOMContentLoaded', init)
 
-// ─── Export for use in app.js ─────────────────────────────────────────────────
 window.SeafileStorage = SeafileStorage
