@@ -23,11 +23,10 @@ const SeafileStorage = {
     }
   },
 
-  // 上传：先获取 Seafile 上传直链，浏览器直接 POST 到 Seafile
-  // 文件不经过 Vercel，彻底解决 body 4.5MB 限制
+  // 上传：文件 base64 发给 Vercel，Vercel 代理转发到 Seafile
   async upload(fileName, meetingId, base64Content) {
     try {
-      // Step 1: 获取 Seafile 上传直链
+      // Step 1: 获取目录信息（验证连接 + 确认目录存在）
       const urlRes = await fetch(
         `/api/seafile/upload-url?meetingId=${encodeURIComponent(meetingId)}`
       );
@@ -36,34 +35,17 @@ const SeafileStorage = {
         return { success: false, error: urlData.error || `获取上传链接失败 (HTTP ${urlRes.status})` };
       }
 
-      // Step 2: 浏览器直接 POST 到 Seafile
-      const binary = atob(base64Content);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes]);
-
-      const formData = new FormData();
-      formData.append('file', blob, fileName);
-      formData.append('parent_dir', urlData.uploadDir);
-      formData.append('replace', '1');
-      formData.append('ret-json', '1');
-
-      const uploadRes = await fetch(urlData.uploadUrl, {
+      // Step 2: 将文件 base64 发给 Vercel 服务端处理
+      const uploadRes = await fetch('/api/seafile/upload', {
         method: 'POST',
-        headers: { 'Authorization': `Token ${urlData.token}` },
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName, meetingId, base64: base64Content })
       });
-
-      if (!uploadRes.ok) {
-        const errText = await uploadRes.text();
-        return { success: false, error: `上传失败 (HTTP ${uploadRes.status}): ${errText}` };
-      }
-
       const result = await uploadRes.json();
-      if (result.success) {
-        return { success: true, path: `${urlData.uploadDir}/${fileName}` };
+      if (!uploadRes.ok || !result.ok) {
+        return { success: false, error: result.error || `上传失败 (HTTP ${uploadRes.status})` };
       }
-      return { success: false, error: JSON.stringify(result) };
+      return { success: true, path: result.path };
     } catch (err) {
       return { success: false, error: err.message || '网络错误' };
     }

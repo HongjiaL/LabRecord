@@ -1,4 +1,5 @@
-const SEAFILE_BASE = 'https://box.nju.edu.cn/api2';
+const SEAFILE_BASE_V1 = 'https://box.nju.edu.cn/api2';
+const SEAFILE_BASE_V2 = 'https://box.nju.edu.cn/api/v2.1';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -20,9 +21,9 @@ export default async function handler(req, res) {
   const dirPath = `/${meetingId}`;
 
   try {
-    // 确保目录存在
+    // 检查目录是否存在
     const checkRes = await fetch(
-      `${SEAFILE_BASE}/repos/${repoId}/dir/?p=${encodeURIComponent(dirPath)}`,
+      `${SEAFILE_BASE_V1}/repos/${repoId}/dir/?p=${encodeURIComponent(dirPath)}`,
       { headers: { 'Authorization': `Token ${token}`, 'Accept': 'application/json' } }
     );
     if (!checkRes.ok) {
@@ -30,31 +31,7 @@ export default async function handler(req, res) {
       return res.status(checkRes.status).json({ ok: false, error: `检查目录失败 (HTTP ${checkRes.status}): ${errText}` });
     }
 
-    // 获取 Seafile 上传链接
-    const linkRes = await fetch(
-      `${SEAFILE_BASE}/repos/${repoId}/upload-link/?p=${encodeURIComponent(dirPath)}`,
-      { headers: { 'Authorization': `Token ${token}`, 'Accept': 'application/json' } }
-    );
-    if (!linkRes.ok) {
-      const errText = await linkRes.text();
-      return res.status(linkRes.status).json({ ok: false, error: `获取上传链接失败 (HTTP ${linkRes.status}): ${errText}` });
-    }
-    let uploadUrl;
-    try {
-      const raw = await linkRes.json();
-      uploadUrl = raw;
-    } catch {
-      const errText = await linkRes.text();
-      return res.status(500).json({ ok: false, error: `Seafile 返回了非 JSON 响应 (HTTP ${linkRes.status}): ${errText.slice(0, 200)}` });
-    }
-    if (!uploadUrl.startsWith('http')) {
-      uploadUrl = SEAFILE_BASE.replace('/api2', '') + uploadUrl;
-    }
-
-    return res.status(200).json({
-      ok: true, uploadUrl, token, uploadDir: dirPath,
-      seafileOrigin: SEAFILE_BASE.replace('/api2', '')
-    });
+    return res.status(200).json({ ok: true, repoId, token, dirPath });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message || '网络错误' });
   }
