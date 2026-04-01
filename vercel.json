@@ -2,13 +2,14 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/seafile/test", "destination": "/api/seafile/index.js" },
+    { "source": "/api/seafile/direct-urls", "destination": "/api/seafile/index.js" },
     { "source": "/api/seafile/upload", "destination": "/api/seafile/index.js" },
     { "source": "/api/seafile/download", "destination": "/api/seafile/index.js" }
   ],
   "functions": {
     "api/**/*.js": {
       "memory": 1024,
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }

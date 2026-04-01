@@ -23,23 +23,53 @@ const SeafileStorage = {
     }
   },
 
-  // 上传（服务端代理，无需用户 token）
+  // 上传：先从服务端获取直传链接，再直接 POST 到 Seafile
+  // 绕过 Vercel 4.5MB body 限制，支持大文件
   async upload(fileName, meetingId, base64Content) {
     try {
-      const res = await fetch('/api/seafile/upload', {
+      // Step 1: 从服务端获取上传链接
+      const urlRes = await fetch(
+        `/api/seafile/direct-urls?fileName=${encodeURIComponent(fileName)}&meetingId=${encodeURIComponent(meetingId)}`
+      );
+      const urlData = await urlRes.json();
+      if (!urlRes.ok || !urlData.ok) {
+        return { success: false, error: urlData.error || `获取上传链接失败 (HTTP ${urlRes.status})` };
+      }
+
+      // Step 2: 浏览器直接 POST 到 Seafile（带 token）
+      const binary = atob(base64Content);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes]);
+
+      const formData = new FormData();
+      formData.append('file', blob, fileName);
+      formData.append('parent_dir', `/${meetingId}`);
+      formData.append('replace', '1');
+      formData.append('ret-json', '1');
+
+      const uploadRes = await fetch(urlData.uploadUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, meetingId, base64Content })
+        headers: { 'Authorization': `Token ${urlData.token}` },
+        body: formData
       });
-      const data = await res.json();
-      if (!res.ok) return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` };
-      return { success: data.success !== false, path: data.path || `/${meetingId}/${fileName}` };
+
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        return { success: false, error: `上传失败 (HTTP ${uploadRes.status}): ${errText}` };
+      }
+
+      const result = await uploadRes.json();
+      if (result.success) {
+        return { success: true, path: `/${meetingId}/${fileName}` };
+      }
+      return { success: false, error: JSON.stringify(result) };
     } catch (err) {
       return { success: false, error: err.message || '网络错误' };
     }
   },
 
-  // 下载（服务端代理，无需用户 token）
+  // 下载：使用 Seafile 文件详情 API（服务端代理，避免 CORS）
   async download(fileName, meetingId) {
     try {
       const res = await fetch(
