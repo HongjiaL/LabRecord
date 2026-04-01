@@ -60,8 +60,6 @@ async function handleTest() {
 }
 
 // ── GET /api/seafile/upload-url ────────────────────────────────────────────
-// 返回 Seafile 上传直链，由浏览器直接 POST 文件内容到 Seafile
-// 文件不经过 Vercel，彻底解决 4.5MB body 限制
 async function handleUploadUrl(query) {
   const token = process.env.SEAFILE_TOKEN;
   const repoId = process.env.SEAFILE_REPO_ID;
@@ -83,7 +81,6 @@ async function handleUploadUrl(query) {
       { headers: seafileHeaders(token) }
     );
     if (!checkRes.ok) {
-      // 目录不存在则创建
       const dirName = dirPath.split('/').filter(Boolean).pop();
       await fetch(
         `${SEAFILE_BASE}/repos/${repoId}/dir/?p=${encodeURIComponent(dirPath)}`,
@@ -108,7 +105,6 @@ async function handleUploadUrl(query) {
     }
     let uploadUrl = await linkRes.json();
 
-    // 如果返回的是相对路径，拼成绝对 URL
     if (!uploadUrl.startsWith('http')) {
       uploadUrl = SEAFILE_BASE.replace('/api2', '') + uploadUrl;
     }
@@ -180,19 +176,18 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const pathname = (req.url || '').split('?')[0];
-  const fullPath = pathname.startsWith('/api/seafile') ? pathname : `/api/seafile${pathname}`;
 
-  if (req.method === 'GET' && (pathname === '/test' || fullPath.endsWith('/test'))) {
+  if (req.method === 'GET' && pathname === '/api/seafile/test') {
     const result = await handleTest();
     return res.status(result.status).json(result.body);
   }
 
-  if (req.method === 'GET' && (pathname === '/upload-url' || fullPath.endsWith('/upload-url'))) {
+  if (req.method === 'GET' && pathname === '/api/seafile/upload-url') {
     const result = await handleUploadUrl(req.query);
     return res.status(result.status).json(result.body);
   }
 
-  if (req.method === 'GET' && (pathname === '/download' || fullPath.endsWith('/download'))) {
+  if (req.method === 'GET' && pathname === '/api/seafile/download') {
     const result = await handleDownload(req.query);
     return res.status(result.status).json(result.body);
   }
