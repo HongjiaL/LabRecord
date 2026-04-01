@@ -74,64 +74,36 @@ const MAX_LOCAL_FALLBACK_B64_CHARS = 2_800_000;
 // ─── File API ──────────────────────────────────────────────────────────────
 const FileAPI = {
   async upload(base64Content, fileName, meetingId) {
-    // ── Priority 1: 南大云盘（用户已配置）──────────────────────────────
-    const seafileConfig = (window.SeafileStorage && window.SeafileStorage.getConfig())
-      ? window.SeafileStorage.getConfig()
-      : null;
-
-    if (seafileConfig) {
-      const result = await window.SeafileStorage.upload(seafileConfig, fileName, meetingId, base64Content);
+    // ── 优先使用南大云盘（管理员配置，全员共用）───────────────────────────
+    try {
+      const result = await window.SeafileStorage.upload(fileName, meetingId, base64Content);
       if (result.success) {
-        // 标记为 seafile 存储，存储 path（不含 repoId），下载时按需查找
         return { sha: `seafile:${result.path}` };
       }
       // 云盘上传失败不抛错，降级到本地存储
       console.warn('[FileAPI.upload] Seafile upload failed, falling back to local:', result.error);
       return { sha: `local:${base64Content}` };
+    } catch (err) {
+      console.warn('[FileAPI.upload] Seafile call failed, falling back to local:', err);
+      return { sha: `local:${base64Content}` };
     }
-
-    // ── Priority 2: GitHub（原有逻辑）──────────────────────────────────
-    const meta = await fetch('/api/files/upload', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-App-Password': sessionStorage.getItem('appPassword') || ''
-      },
-      body: JSON.stringify({ fileName, meetingId })
-    }).then(r => {
-      if (!r.ok) {
-        return r.json().catch(() => ({})).then(err => {
-          throw new Error(`获取上传凭证失败: ${err.error || r.status}`);
-        });
-      }
-      return r.json();
-    });
-
-    const bodyTemplate = meta.bodyTemplate;
-    bodyTemplate.content = base64Content;
-
-    const putRes = await fetch(meta.uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Authorization': meta.headers['Authorization'],
-        'Content-Type': 'application/json',
-        'Accept': meta.headers['Accept'],
-        'X-GitHub-Api-Version': meta.headers['X-GitHub-Api-Version']
-      },
-      body: JSON.stringify(bodyTemplate)
-    });
-
-    if (!putRes.ok) {
-      const err = await putRes.json().catch(() => ({}));
-      throw new Error(`GitHub 上传失败: ${err.message || putRes.status}`);
-    }
-
-    const data = await putRes.json();
-    return { sha: data.content.sha };
   },
 
   async download(fileName, meetingId) {
-    // 优先尝试 GitHub API
+    // ── 优先尝试南大云盘 ────────────────────────────────────────────────
+    try {
+      const result = await window.SeafileStorage.download(fileName, meetingId);
+      if (result.ok && result.content) {
+        return { ok: true, content: result.content };
+      }
+      if (result.status !== 404) {
+        console.warn('[FileAPI.download] Seafile failed:', result.error);
+      }
+    } catch (err) {
+      console.warn('[FileAPI.download] Seafile call failed:', err);
+    }
+
+    // ── 降级：GitHub ───────────────────────────────────────────────────
     try {
       const res = await fetch(`/api/files/download?meetingId=${encodeURIComponent(meetingId)}&fileName=${encodeURIComponent(fileName)}`);
       if (res.ok) {
@@ -142,21 +114,7 @@ const FileAPI = {
         const err = await res.json().catch(() => ({}));
         return { ok: false, error: err.error || `HTTP ${res.status}`, status: res.status };
       }
-      // 404 → GitHub 上没有，尝试云盘
     } catch (_) { /* fall through */ }
-
-    // ── 降级：南大云盘 ────────────────────────────────────────────────
-    const seafileConfig = (window.SeafileStorage && window.SeafileStorage.getConfig())
-      ? window.SeafileStorage.getConfig()
-      : null;
-
-    if (seafileConfig) {
-      const result = await window.SeafileStorage.download(seafileConfig, fileName, meetingId);
-      if (result.ok) {
-        return { ok: true, content: result.content };
-      }
-      return { ok: false, error: result.error || '云盘下载失败', status: 404 };
-    }
 
     return { ok: false, error: '文件未找到', status: 404 };
   }
@@ -688,7 +646,7 @@ class MeetingApp {
       const lit = (participant?.literature || []).find(l => l.pptDataUrl);
       if (!lit) { alert('未找到关联的 PPT 文件'); return; }
       const raw = lit.pptDataUrl;
-      if (raw.startsWith('repo:')) {
+      if (raw.startsWith('repo:') || raw.startsWith('seafile:')) {
         btn.textContent = '下载中...';
         btn.disabled = true;
         try {
@@ -958,7 +916,7 @@ class MeetingApp {
         const a = document.createElement('a');
         a.href = url; a.download = fileName; a.click();
         URL.revokeObjectURL(url);
-      } else if (raw.startsWith('repo:')) {
+      } else if (raw.startsWith('repo:') || raw.startsWith('seafile:')) {
         const sha = raw.slice(5);
         dlBtn.textContent = '...'; dlBtn.disabled = true;
         try {

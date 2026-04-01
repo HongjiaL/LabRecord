@@ -1,13 +1,11 @@
 /**
- * GET  /api/seafile/test      — 测试连接 + 获取资料库列表
- * POST /api/seafile/upload    — 上传文件
- * GET  /api/seafile/download  — 下载文件
+ * 南大云盘共享存储 API（服务端代理）
+ * Token 和资料库 ID 从 Vercel 环境变量读取，所有人共用。
  *
- * 使用 Seafile Web API Token 认证（Bearer Token）。
- * 前端直接请求这些接口，由 Vercel 服务端代为请求南大云盘，
- * 绕过浏览器跨域限制。
+ * GET  /api/seafile/test       — 测试连接 + 获取资料库列表（用于管理员首次配置）
+ * POST /api/seafile/upload     — 上传文件
+ * GET  /api/seafile/download   — 下载文件
  */
-import { checkAppPassword } from '../_auth.js';
 
 const SEAFILE_BASE = 'https://box.nju.edu.cn/api2';
 
@@ -18,10 +16,19 @@ function seafileHeaders(token) {
   };
 }
 
-// ── GET /api/seafile/test — 获取资料库列表 ─────────────────────────────────
-async function handleTest(query) {
-  const token = query.token;
-  if (!token) return { status: 400, body: { error: '缺少 token 参数' } };
+// ── GET /api/seafile/test — 管理员查看资料库列表 ───────────────────────────
+async function handleTest() {
+  const token = process.env.SEAFILE_TOKEN;
+
+  if (!token) {
+    return {
+      status: 200,
+      body: {
+        configured: false,
+        error: 'Vercel 尚未配置 SEAFILE_TOKEN 环境变量'
+      }
+    };
+  }
 
   try {
     const res = await fetch(`${SEAFILE_BASE}/repos/`, {
@@ -29,27 +36,49 @@ async function handleTest(query) {
     });
     if (!res.ok) {
       const text = await res.text();
-      return { status: res.status, body: { error: `连接失败 (HTTP ${res.status}): ${text}` } };
+      return { status: 200, body: { configured: true, ok: false, error: `连接失败 (HTTP ${res.status}): ${text}` } };
     }
     const data = await res.json();
+    const repos = data.map((r) => ({ id: r.id, name: r.name }));
+
+    // 如果也配置了 REPO_ID，返回当前选中的资料库信息
+    const repoId = process.env.SEAFILE_REPO_ID;
+    const currentRepo = repos.find((r) => r.id === repoId);
+
     return {
       status: 200,
-      body: { ok: true, repos: data.map(r => ({ id: r.id, name: r.name })) }
+      body: {
+        configured: true,
+        ok: true,
+        repos,
+        currentRepoId: repoId || null,
+        currentRepoName: currentRepo ? currentRepo.name : null
+      }
     };
   } catch (err) {
-    return { status: 500, body: { error: err.message || '网络错误' } };
+    return { status: 200, body: { configured: true, ok: false, error: err.message || '网络错误' } };
   }
 }
 
 // ── POST /api/seafile/upload ──────────────────────────────────────────────
 async function handleUpload(body) {
-  const { token, repoId, fileName, meetingId, base64Content } = body;
-  if (!token || !repoId || !fileName || !meetingId || !base64Content) {
-    return { status: 400, body: { error: 'token, repoId, fileName, meetingId, base64Content 均必填' } };
+  const token = process.env.SEAFILE_TOKEN;
+  const repoId = process.env.SEAFILE_REPO_ID;
+
+  if (!token || !repoId) {
+    return { status: 500, body: { success: false, error: '南大云盘未配置（请在 Vercel 设置 SEAFILE_TOKEN 和 SEAFILE_REPO_ID）' } };
+  }
+
+  const { fileName, meetingId, base64Content } = body;
+  if (!fileName || !meetingId || !base64Content) {
+    return { status: 400, body: { success: false, error: '缺少 fileName、meetingId 或 base64Content 参数' } };
   }
 
   try {
-    // Step 1: 获取上传链接
+    // 先确保目录存在
+    await ensureFolder(token, repoId, `/${meetingId}`);
+
+    // 获取上传链接
     const linkRes = await fetch(
       `${SEAFILE_BASE}/repos/${repoId}/upload-link/?p=${encodeURIComponent('/' + meetingId)}`,
       { headers: seafileHeaders(token) }
@@ -60,7 +89,7 @@ async function handleUpload(body) {
     }
     const uploadUrl = await linkRes.json();
 
-    // Step 2: 上传文件（multipart/form-data）
+    // 转成 binary bytes
     const binaryStr = Buffer.from(base64Content, 'base64').toString('binary');
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
@@ -95,9 +124,16 @@ async function handleUpload(body) {
 
 // ── GET /api/seafile/download ──────────────────────────────────────────────
 async function handleDownload(query) {
-  const { token, repoId, fileName, meetingId } = query;
-  if (!token || !repoId || !fileName || !meetingId) {
-    return { status: 400, body: { ok: false, error: '缺少必要参数' } };
+  const token = process.env.SEAFILE_TOKEN;
+  const repoId = process.env.SEAFILE_REPO_ID;
+
+  if (!token || !repoId) {
+    return { status: 500, body: { ok: false, error: '南大云盘未配置' } };
+  }
+
+  const { fileName, meetingId } = query;
+  if (!fileName || !meetingId) {
+    return { status: 400, body: { ok: false, error: '缺少 fileName 或 meetingId' } };
   }
 
   const filePath = `/${meetingId}/${fileName}`;
@@ -112,8 +148,7 @@ async function handleDownload(query) {
         body: { ok: false, error: `文件不存在或无权限 (HTTP ${res.status})`, status: res.status }
       };
     }
-    const data = await res.json();
-    // 获取文件下载链接
+
     const rawUrl = `${SEAFILE_BASE}/repos/${repoId}/files/${encodeURIComponent(filePath)}/?raw=1`;
     const rawRes = await fetch(rawUrl, {
       headers: { 'Authorization': `Token ${token}`, 'Accept': 'application/octet-stream' }
@@ -130,31 +165,56 @@ async function handleDownload(query) {
   }
 }
 
+// ── 确保目录存在，不存在则自动创建 ────────────────────────────────────────
+async function ensureFolder(token, repoId, dirPath) {
+  // 检查目录是否存在
+  const checkRes = await fetch(
+    `${SEAFILE_BASE}/repos/${repoId}/dir/?p=${encodeURIComponent(dirPath)}`,
+    { headers: seafileHeaders(token) }
+  );
+  if (checkRes.ok) return; // 目录已存在
+
+  // 创建目录
+  const dirName = dirPath.split('/').filter(Boolean).pop();
+  await fetch(
+    `${SEAFILE_BASE}/repos/${repoId}/dir/?p=${encodeURIComponent(dirPath)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${token}`,
+        'Content-Type': 'application/json; charset=utf-8',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ operation: 'mkdir', dir_name: dirName })
+    }
+  );
+}
+
 // ── 主入口 ─────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-App-Password');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // 解析 path（去掉 query string）来判断路由
   const pathname = (req.url || '').split('?')[0];
+  const fullPath = pathname.startsWith('/api/seafile') ? pathname : `/api/seafile${pathname}`;
 
-  // ── GET /api/seafile/test?token=xxx ────────────────────────────────────
-  if (req.method === 'GET' && pathname.endsWith('/test')) {
-    const result = await handleTest(req.query);
+  // ── GET /api/seafile/test ────────────────────────────────────────────────
+  if (req.method === 'GET' && (pathname === '/test' || fullPath.endsWith('/test'))) {
+    const result = await handleTest();
     return res.status(result.status).json(result.body);
   }
 
-  // ── GET /api/seafile/download?token=...&repoId=...&fileName=...&meetingId=... ──
-  if (req.method === 'GET' && pathname.endsWith('/download') && req.query.fileName && req.query.meetingId) {
+  // ── GET /api/seafile/download ───────────────────────────────────────────
+  if (req.method === 'GET' && (pathname === '/download' || fullPath.endsWith('/download'))) {
     const result = await handleDownload(req.query);
     return res.status(result.status).json(result.body);
   }
 
   // ── POST /api/seafile/upload ────────────────────────────────────────────
-  if (req.method === 'POST' && pathname.endsWith('/upload')) {
+  if (req.method === 'POST' && (pathname === '/upload' || fullPath.endsWith('/upload'))) {
     const result = await handleUpload(req.body || {});
     return res.status(result.status).json(result.body);
   }
