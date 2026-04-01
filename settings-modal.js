@@ -23,20 +23,20 @@ const SeafileStorage = {
     }
   },
 
-  // 上传：先从服务端获取直传链接，再直接 POST 到 Seafile
-  // 绕过 Vercel 4.5MB body 限制，支持大文件
+  // 上传：先获取 Seafile 上传直链，浏览器直接 POST 到 Seafile
+  // 文件不经过 Vercel，彻底解决 body 4.5MB 限制
   async upload(fileName, meetingId, base64Content) {
     try {
-      // Step 1: 从服务端获取上传链接
+      // Step 1: 获取 Seafile 上传直链
       const urlRes = await fetch(
-        `/api/seafile/direct-urls?fileName=${encodeURIComponent(fileName)}&meetingId=${encodeURIComponent(meetingId)}`
+        `/api/seafile/upload-url?meetingId=${encodeURIComponent(meetingId)}`
       );
       const urlData = await urlRes.json();
       if (!urlRes.ok || !urlData.ok) {
         return { success: false, error: urlData.error || `获取上传链接失败 (HTTP ${urlRes.status})` };
       }
 
-      // Step 2: 浏览器直接 POST 到 Seafile（带 token）
+      // Step 2: 浏览器直接 POST 到 Seafile
       const binary = atob(base64Content);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -44,7 +44,7 @@ const SeafileStorage = {
 
       const formData = new FormData();
       formData.append('file', blob, fileName);
-      formData.append('parent_dir', `/${meetingId}`);
+      formData.append('parent_dir', urlData.uploadDir);
       formData.append('replace', '1');
       formData.append('ret-json', '1');
 
@@ -61,7 +61,7 @@ const SeafileStorage = {
 
       const result = await uploadRes.json();
       if (result.success) {
-        return { success: true, path: `/${meetingId}/${fileName}` };
+        return { success: true, path: `${urlData.uploadDir}/${fileName}` };
       }
       return { success: false, error: JSON.stringify(result) };
     } catch (err) {
@@ -69,7 +69,7 @@ const SeafileStorage = {
     }
   },
 
-  // 下载：使用 Seafile 文件详情 API（服务端代理，避免 CORS）
+  // 下载（服务端代理，无需用户 token）
   async download(fileName, meetingId) {
     try {
       const res = await fetch(
