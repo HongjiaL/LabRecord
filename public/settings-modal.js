@@ -16,7 +16,8 @@ function _base64ToUint8Array(b64) {
   return bytes;
 }
 
-// ─── Supabase Storage — 大文件直传 Supabase（绕过 Vercel ~4.5MB 请求体限制） ──
+// ─── Supabase Storage：文件字节直连 Supabase（不经 Vercel，无 4.5MB 限制） ──
+// 仅需 GET /api/storage/public-config（几 KB JSON），大文件走浏览器 → *.supabase.co
 const StorageClient = {
   async getSharedStatus() {
     try {
@@ -38,43 +39,49 @@ const StorageClient = {
       try { cfg = await cfgRes.json(); } catch { cfg = {}; }
 
       if (!cfgRes.ok || !cfg.ok || !cfg.url || !cfg.anonKey) {
-        return this._uploadSmallViaVercel(safeName, meetingId, base64Content);
-      }
-
-      const prepRes = await fetch('/api/storage/signed-upload-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName: safeName, meetingId })
-      });
-      let prep;
-      try { prep = await prepRes.json(); } catch { prep = {}; }
-      if (!prepRes.ok || !prep.ok || !prep.path || !prep.token) {
         return {
           success: false,
-          error: prep.error || `获取上传地址失败 (HTTP ${prepRes.status})`
+          error: cfg.error || '无法读取云存储配置，请确认 Vercel 已配置 SUPABASE_URL / SUPABASE_ANON_KEY'
         };
       }
 
-      let createClient;
-      try {
-        const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm');
-        createClient = mod.createClient;
-      } catch {
-        return {
-          success: false,
-          error:
-            '无法加载上传组件（浏览器未能加载 jsDelivr 上的 Supabase 库）。请检查网络，或将文件压缩到约 3MB 以下后重试。'
-        };
-      }
-
-      const supabase = createClient(cfg.url, cfg.anonKey);
       const bytes = _base64ToUint8Array(base64Content);
-      const { error: upErr } = await supabase.storage
-        .from('meeting-files')
-        .uploadToSignedUrl(prep.path, prep.token, bytes, { contentType: 'application/octet-stream' });
+      const objectPath = `${meetingId}/${safeName}`;
+      const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/');
+      const base = String(cfg.url).replace(/\/$/, '');
+      const uploadUrl = `${base}/storage/v1/object/meeting-files/${encodedPath}?upsert=true`;
 
-      if (upErr) {
-        return { success: false, error: upErr.message || '上传到云存储失败' };
+      const upRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${cfg.anonKey}`,
+          apikey: cfg.anonKey,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: bytes,
+      });
+
+      if (!upRes.ok) {
+        let msg = `HTTP ${upRes.status}`;
+        try {
+          const raw = await upRes.text();
+          if (raw) {
+            try {
+              const j = JSON.parse(raw);
+              if (j.message) msg = j.message;
+              else if (j.error)
+                msg = typeof j.error === 'string' ? j.error : j.error.message || msg;
+              else msg = raw.slice(0, 300);
+            } catch {
+              msg = raw.slice(0, 300);
+            }
+          }
+        } catch { /* ignore */ }
+        if (/row-level security|RLS/i.test(msg)) {
+          msg +=
+            '。请在 Supabase 为 storage.objects 添加策略（见仓库内 supabase_storage_policies.sql）。';
+        }
+        return { success: false, error: msg };
       }
 
       try {
@@ -84,35 +91,12 @@ const StorageClient = {
           body: JSON.stringify({
             meetingId,
             fileName: safeName,
-            fileSize: bytes.length
-          })
+            fileSize: bytes.length,
+          }),
         });
-      } catch { /* 元数据登记失败不影响已上传文件 */ }
+      } catch { /* 仅元数据登记，失败不影响已上传文件 */ }
 
-      const relPath = prep.path;
-      const storedFileName = relPath.includes('/')
-        ? relPath.slice(relPath.lastIndexOf('/') + 1)
-        : relPath;
-      return { success: true, path: `supabase:${relPath}`, storedFileName };
-    } catch (err) {
-      return { success: false, error: err.message || '网络错误' };
-    }
-  },
-
-  /** 仅适合极小文件：整包 JSON 经 Vercel，易触发 HTTP 413 */
-  async _uploadSmallViaVercel(fileName, meetingId, base64Content) {
-    try {
-      const res = await fetch('/api/storage/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, meetingId, base64: base64Content })
-      });
-      let data;
-      try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
-      if (!res.ok || !data.ok) {
-        return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` };
-      }
-      return { success: true, path: `supabase:${data.path}`, storedFileName: fileName };
+      return { success: true, path: `supabase:${objectPath}`, storedFileName: safeName };
     } catch (err) {
       return { success: false, error: err.message || '网络错误' };
     }
