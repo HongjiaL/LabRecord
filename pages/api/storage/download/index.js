@@ -22,22 +22,41 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: '缺少 fileName 或 meetingId 参数' });
   }
 
-  const filePath = `${meetingId}/${fileName}`;
-
-  try {
+  async function tryDownload(name) {
     const { data, error } = await supabase.storage
       .from('meeting-files')
-      .download(filePath);
+      .download(`${meetingId}/${name}`);
+    if (!error && data) return data;
+    return null;
+  }
 
-    if (error || !data) {
+  try {
+    // 1. Try the name as passed (works for newly saved records where pptFileName == stored name)
+    let fileData = await tryDownload(fileName);
+
+    // 2. Fallback: look up actual stored name from meeting_files table
+    //    This fixes old records where pptFileName was the Chinese original but
+    //    the safe name in the bucket differs (e.g. 3_28_2.pptx vs 文献分享3.28.pptx)
+    if (!fileData) {
+      const { data: row } = await supabase
+        .from('meeting_files')
+        .select('file_name')
+        .eq('meeting_id', meetingId)
+        .maybeSingle();
+      if (row?.file_name) {
+        fileData = await tryDownload(row.file_name);
+      }
+    }
+
+    if (!fileData) {
       return res.status(404).json({
         ok: false,
-        error: `文件不存在 (HTTP 404): ${error?.message || ''}`,
+        error: '文件未找到，请确认该文件已上传成功',
         status: 404
       });
     }
 
-    const arrayBuffer = await data.arrayBuffer();
+    const arrayBuffer = await fileData.arrayBuffer();
     const binaryStr = Buffer.from(arrayBuffer).toString('binary');
     const base64 = Buffer.from(binaryStr, 'binary').toString('base64');
 
