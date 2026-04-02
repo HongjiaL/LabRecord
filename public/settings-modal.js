@@ -16,6 +16,22 @@ function _base64ToUint8Array(b64) {
   return bytes;
 }
 
+/** Supabase Storage 对 object key 限制很严：中文、括号、空格等会报 Invalid key */
+function _storageSafeFileName(original) {
+  const raw = String(original || 'file').trim().replace(/[/\\]/g, '_');
+  const dot = raw.lastIndexOf('.');
+  const extRaw = dot >= 0 ? raw.slice(dot + 1) : '';
+  const ext = extRaw.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().slice(0, 12) || 'bin';
+  let base = (dot >= 0 ? raw.slice(0, dot) : raw).replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  if (base.length < 1 || base.length > 180) {
+    let h = 0;
+    for (let i = 0; i < raw.length; i++) h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
+    base = 'f' + (h >>> 0).toString(16) + '_' + Date.now().toString(36);
+  }
+  const name = `${base}.${ext}`;
+  return name.length > 200 ? `${base.slice(0, 160)}.${ext}` : name;
+}
+
 // ─── Supabase Storage：文件字节直连 Supabase（不经 Vercel，无 4.5MB 限制） ──
 // 仅需 GET /api/storage/public-config（几 KB JSON），大文件走浏览器 → *.supabase.co
 const StorageClient = {
@@ -32,7 +48,7 @@ const StorageClient = {
   },
 
   async upload(fileName, meetingId, base64Content) {
-    const safeName = String(fileName || '').replace(/[/\\]/g, '_');
+    const safeName = _storageSafeFileName(fileName);
     try {
       const cfgRes = await fetch('/api/storage/public-config');
       let cfg;
