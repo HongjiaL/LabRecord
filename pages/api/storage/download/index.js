@@ -11,7 +11,10 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    return res.status(500).json({ ok: false, error: 'Supabase 未配置' });
+    return res.status(503).json({
+      ok: false,
+      error: 'Supabase 环境变量未配置。请在 Vercel 项目设置中添加 SUPABASE_URL 和 SUPABASE_ANON_KEY。'
+    });
   }
 
   const { fileName, meetingId } = req.query;

@@ -24,6 +24,12 @@ export default async function handler(req, res) {
   const { id } = req.query;
   if (!id) return res.status(400).json({ error: 'Meeting ID is required' });
 
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return res.status(503).json({
+      error: 'Supabase 环境变量未配置。请在 Vercel 项目设置中添加 SUPABASE_URL 和 SUPABASE_ANON_KEY。'
+    });
+  }
+
   if (req.method === 'GET') return handleGetMeeting(req, res, id);
   if (req.method === 'PUT') {
     const authError = checkAppPassword(req);

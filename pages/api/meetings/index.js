@@ -21,6 +21,12 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return res.status(503).json({
+      error: 'Supabase 环境变量未配置。请在 Vercel 项目设置中添加 SUPABASE_URL 和 SUPABASE_ANON_KEY。'
+    });
+  }
+
   if (req.method === 'GET') return handleGetMeetings(req, res);
   if (req.method === 'POST') {
     const authError = checkAppPassword(req);
