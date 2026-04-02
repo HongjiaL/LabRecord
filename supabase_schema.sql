@@ -46,3 +46,19 @@ create policy if not exists "public_all_participants" on participants for all us
 
 alter table literature enable row level security;
 create policy if not exists "public_all_literature" on literature for all using (true) with check (true);
+
+-- ============================================================
+-- meeting_files 表：存储 PPT/PDF 文件（Supabase Storage）
+-- ============================================================
+create table if not exists meeting_files (
+  id uuid primary key default gen_random_uuid(),
+  meeting_id text not null,
+  file_name text not null,
+  file_path text not null,
+  file_size bigint,
+  mime_type text,
+  created_at timestamptz default now()
+);
+
+alter table meeting_files enable row level security;
+create policy if not exists "public_all_meeting_files" on meeting_files for all using (true) with check (true);

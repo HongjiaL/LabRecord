@@ -19,15 +19,11 @@
 
 ### 数据存储
 
-所有数据（组会记录元数据）保存在浏览器 **localStorage** 中，属于本地存储，不会自动同步到其他设备或浏览器。PPT/PDF 文件可选择存储在本地或远程 GitHub 仓库中。
+所有数据保存在 **Supabase** 云数据库中，包括组会记录元数据和 PPT/PDF 文件，无需本地存储，跨设备访问自动同步。
 
 ### PPT/PDF 存储方式
 
-**本地存储（默认）**：文件以 Base64 编码存储在 localStorage 中，适合小文件（建议单个文件不超过 5 MB）。
-
-**南大云盘（推荐）**：通过 WebDAV 直接上传到南大云盘（box.nju.edu.cn），适合大文件和实验室内部长期存储。配置方式：点击导航栏右上角 **「存储设置」**，输入南大学工号和 WebDAV 密码，测试连接后选择存储资料库即可。
-
-**GitHub 仓库远程存储**：文件存储在 GitHub 仓库 `uploads/` 目录下。配置方式：点击导航栏右侧 **GitHub** 按钮，输入 Personal Access Token 并测试连接即可。
+所有文件统一存储在 **Supabase Storage** 中，由管理员在 Vercel 环境变量中配置，所有成员共享使用，无需个人设置。
 
 如需在多台设备使用，建议定期点击右上角「导出」按钮备份数据。
 
@@ -39,19 +35,9 @@
 - 南大云盘：每个组会的数据会存放在资料库中以组会ID命名的子文件夹中
 - GitHub：文件存储在 `uploads/{meetingId}/` 目录
 
-### 南大云盘配置步骤
+> 注意：无需个人配置存储，管理员已将 Supabase 存储配置完毕，所有成员共享使用。
 
-1. 登录 [box.nju.edu.cn](https://box.nju.edu.cn)，在资料库中创建一个专用文件夹（如「组会PPT」）
-2. 进入「**账户设置 → API Token**」页面，生成一个 API Token
-3. 点击导航栏右上角 **「存储设置」**
-4. 输入账户（格式：`学号@nju.edu.cn`，如 `0123456@nju.edu.cn`）
-5. 输入上一步生成的 API Token
-6. 点击「**测试连接**」，连接成功后从下拉列表中选择存储资料库
-7. 点击「**保存配置**」
-
-> 注意：WebDAV 独立密码与统一身份认证密码不同，必须在南大云盘的专属页面生成。
-
-### GitHub Token 生成步骤
+### GitHub Token 生成步骤（可选，仅 GitHub 存储需要）
 
 1. 打开 GitHub 设置页面：[github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)（注意：不是 classic，要选 **Fine-grained personal access tokens**）
 2. **Token name** 填写备注（如 `实验室组会记录网站`）
@@ -65,6 +51,8 @@
 7. 在网站导航栏右侧点击 **GitHub** 按钮，粘贴 Token 并点击「测试连接」，确认成功后保存
 
 > 注意：Token 一旦生成请妥善保管，不要泄露给他人。
+
+> 注意：Supabase 存储为默认方式，GitHub 存储已弃用，建议使用 Supabase 存储。
 
 ## 文件说明
 

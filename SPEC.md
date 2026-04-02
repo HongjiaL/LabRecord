@@ -63,7 +63,7 @@
 **组会记录管理**：
 - 添加新组会：填写日期时间、参与者名单
 - 为每个参与者添加文献（文献名、作者/期刊、DOI/链接、文字稿内容）
-- 为每份文献上传/关联 PPT 文件（支持南大云盘、GitHub 远程或本地 Base64 三种存储方式）
+- 为每份文献上传/关联 PPT 文件（支持 Supabase Storage 云存储）
 - 编辑已有组会
 - 删除组会（二次确认）
 
@@ -74,11 +74,8 @@
 - 点击直接跳转到对应组会详情页
 
 **数据存储**：
-- 组会元数据存储在浏览器 localStorage 中
-- PPT/PDF 文件支持三种存储方式（按优先级自动选择）：
-  1. **南大云盘**（推荐）：通过 WebDAV 直传 box.nju.edu.cn，适合大文件和实验室内部长期存储
-  2. **GitHub**：通过 Vercel API 代理存储到 GitHub 仓库 `uploads/` 目录
-  3. **本地**：Base64 编码存储在 localStorage，适合小文件（≤5MB）
+- 组会元数据和 PPT/PDF 文件统一存储在 Supabase 云数据库和 Storage 中
+- 所有成员共享使用，无需个人配置
 - 数据格式：JSON 数组
 - 支持数据导出为 JSON 文件（备份）
 - 支持从 JSON 文件导入（恢复）
@@ -181,9 +178,9 @@
 ```
 
 **PPT 存储策略**：
-- 使用 FileReader API 将用户上传的 PPT/PDF/图片文件转为 Base64 data URL
-- 存储在 localStorage 中（适用于小型文件）
-- 提醒用户：大型 PPT 建议压缩或转换为 PDF 以节省空间
+- 文件通过 Vercel API 上传至 Supabase Storage，浏览器端无需处理 Base64 编码
+- 支持大文件（最大 10MB）
+- 文件按 `meetingId/filename` 路径存储，便于管理
 
 **搜索与过滤**：
 - 客户端实时过滤，300ms 防抖

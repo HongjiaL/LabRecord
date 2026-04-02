@@ -46,7 +46,7 @@ function _pptDownloadBtn(raw, fileName, meetingId) {
     const dataUrl = `data:${mimeType};base64,${raw.slice(6)}`;
     return `<a href="${dataUrl}" download="${escapeHtml(fileName)}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
   }
-  if (raw.startsWith('repo:') || raw.startsWith('seafile:')) {
+  if (raw.startsWith('supabase:') || raw.startsWith('repo:') || raw.startsWith('seafile:')) {
     return `<a href="#" class="ppt-download-btn repo-download" data-meeting="${meetingId}" data-file="${escapeHtml(fileName)}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
   }
   return `<a href="${escapeHtml(raw)}" download="${escapeHtml(fileName)}" class="ppt-download-btn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.75rem;font-weight:600;border-radius:20px;background:rgba(255,255,255,0.2);color:#fff;text-decoration:none;white-space:nowrap">${label}</a>`;
@@ -72,9 +72,9 @@ function _getMimeType(fileName) {
 // ─── File API ──────────────────────────────────────────────────────────────
 const FileAPI = {
   async upload(base64Content, fileName, meetingId) {
-    // ── 使用南大云盘（管理员配置，全员共用）───────────────────────────────
+    // ── 上传到 Supabase Storage（管理员配置，全员共用）────────────────────
     try {
-      const result = await window.SeafileStorage.upload(fileName, meetingId, base64Content);
+      const result = await window.StorageClient.upload(fileName, meetingId, base64Content);
       if (result.success) {
         return { success: true, path: result.path };
       }
@@ -85,31 +85,18 @@ const FileAPI = {
   },
 
   async download(fileName, meetingId) {
-    // ── 优先尝试南大云盘 ────────────────────────────────────────────────
+    // ── 从 Supabase Storage 下载 ─────────────────────────────────────────
     try {
-      const result = await window.SeafileStorage.download(fileName, meetingId);
+      const result = await window.StorageClient.download(fileName, meetingId);
       if (result.ok && result.content) {
         return { ok: true, content: result.content };
       }
       if (result.status !== 404) {
-        console.warn('[FileAPI.download] Seafile failed:', result.error);
+        console.warn('[FileAPI.download] Supabase failed:', result.error);
       }
     } catch (err) {
-      console.warn('[FileAPI.download] Seafile call failed:', err);
+      console.warn('[FileAPI.download] Supabase call failed:', err);
     }
-
-    // ── 降级：GitHub ───────────────────────────────────────────────────
-    try {
-      const res = await fetch(`/api/files/download?meetingId=${encodeURIComponent(meetingId)}&fileName=${encodeURIComponent(fileName)}`);
-      if (res.ok) {
-        const data = await res.json();
-        return data;
-      }
-      if (res.status !== 404) {
-        const err = await res.json().catch(() => ({}));
-        return { ok: false, error: err.error || `HTTP ${res.status}`, status: res.status };
-      }
-    } catch (_) { /* fall through */ }
 
     return { ok: false, error: '文件未找到', status: 404 };
   }
@@ -641,7 +628,7 @@ class MeetingApp {
       const lit = (participant?.literature || []).find(l => l.pptDataUrl);
       if (!lit) { alert('未找到关联的 PPT 文件'); return; }
       const raw = lit.pptDataUrl;
-      if (raw.startsWith('repo:') || raw.startsWith('seafile:')) {
+      if (raw.startsWith('supabase:') || raw.startsWith('repo:') || raw.startsWith('seafile:')) {
         btn.textContent = '下载中...';
         btn.disabled = true;
         try {
@@ -911,8 +898,7 @@ class MeetingApp {
         const a = document.createElement('a');
         a.href = url; a.download = fileName; a.click();
         URL.revokeObjectURL(url);
-      } else if (raw.startsWith('repo:') || raw.startsWith('seafile:')) {
-        const sha = raw.slice(5);
+      } else if (raw.startsWith('supabase:') || raw.startsWith('repo:') || raw.startsWith('seafile:')) {
         dlBtn.textContent = '...'; dlBtn.disabled = true;
         try {
           const result = await FileAPI.download(fileName, document.getElementById(`lf-meeting-id-${pid}`)?.value || '');
