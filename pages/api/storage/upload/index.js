@@ -1,4 +1,8 @@
-import { supabase } from '../../../supabase';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export const config = {
   api: {
@@ -14,7 +18,6 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const { supabaseUrl, supabaseAnonKey } = process.env;
   if (!supabaseUrl || !supabaseAnonKey) {
     return res.status(500).json({ ok: false, error: 'Supabase 未配置' });
   }
