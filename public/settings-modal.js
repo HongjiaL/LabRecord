@@ -14,7 +14,8 @@ const StorageClient = {
   async getSharedStatus() {
     try {
       const res = await fetch('/api/storage/status');
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); } catch { data = {}; }
       if (!res.ok) return { ok: false, error: data.error };
       return data;
     } catch (err) {
@@ -29,7 +30,8 @@ const StorageClient = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileName, meetingId, base64: base64Content })
       });
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
       if (!res.ok || !data.ok) {
         return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` };
       }
@@ -45,7 +47,8 @@ const StorageClient = {
         `/api/storage/download?fileName=${encodeURIComponent(fileName)}&meetingId=${encodeURIComponent(meetingId)}`,
         { headers: { 'Accept': 'application/json' } }
       );
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); } catch { data = {}; }
       if (!res.ok) return { ok: false, error: data.error || `下载失败 (HTTP ${res.status})`, status: res.status };
       return { ok: true, content: data.content };
     } catch (err) {
