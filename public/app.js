@@ -109,7 +109,12 @@ const Storage = {
   async load() {
     try {
       const res = await fetch('/api/meetings');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Non-2xx responses may be HTML error pages — parse them safely
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        console.warn('[Storage.load] API returned non-OK:', res.status, text.slice(0, 200));
+        throw new Error(`HTTP ${res.status}`);
+      }
       return await res.json();
     } catch (e) {
       console.warn('[Storage.load] API failed, falling back to localStorage', e);
@@ -127,15 +132,21 @@ const Storage = {
       const res = await fetch(`/api/meetings/${id}`);
       if (!res.ok) {
         if (res.status === 404) return null;
+        const text = await res.text().catch(() => '');
+        console.warn('[Storage.getMeeting] API returned non-OK:', res.status, text.slice(0, 200));
         throw new Error(`HTTP ${res.status}`);
       }
       return await res.json();
     } catch (e) {
       console.warn('[Storage.getMeeting] API failed, falling back to localStorage', e);
-      const raw = localStorage.getItem(this.KEY);
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      return data.find(m => m.id === id) || null;
+      try {
+        const raw = localStorage.getItem(this.KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        return data.find(m => m.id === id) || null;
+      } catch {
+        return null;
+      }
     }
   },
 

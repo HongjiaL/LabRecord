@@ -176,4 +176,6 @@ function init() {
 
 document.addEventListener('DOMContentLoaded', init);
 
+// Expose to window immediately (before DOMContentLoaded fires),
+// so that app.js can safely call window.StorageClient regardless of script load order.
 window.StorageClient = StorageClient;
