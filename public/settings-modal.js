@@ -9,7 +9,14 @@ const STORAGE_ICONS = {
   alert: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
 };
 
-// ─── Supabase Storage — 调用服务端 API（无用户侧 token） ─────────────────────
+function _base64ToUint8Array(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// ─── Supabase Storage — 大文件直传 Supabase（绕过 Vercel ~4.5MB 请求体限制） ──
 const StorageClient = {
   async getSharedStatus() {
     try {
@@ -24,6 +31,76 @@ const StorageClient = {
   },
 
   async upload(fileName, meetingId, base64Content) {
+    const safeName = String(fileName || '').replace(/[/\\]/g, '_');
+    try {
+      const cfgRes = await fetch('/api/storage/public-config');
+      let cfg;
+      try { cfg = await cfgRes.json(); } catch { cfg = {}; }
+
+      if (!cfgRes.ok || !cfg.ok || !cfg.url || !cfg.anonKey) {
+        return this._uploadSmallViaVercel(safeName, meetingId, base64Content);
+      }
+
+      const prepRes = await fetch('/api/storage/signed-upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: safeName, meetingId })
+      });
+      let prep;
+      try { prep = await prepRes.json(); } catch { prep = {}; }
+      if (!prepRes.ok || !prep.ok || !prep.path || !prep.token) {
+        return {
+          success: false,
+          error: prep.error || `获取上传地址失败 (HTTP ${prepRes.status})`
+        };
+      }
+
+      let createClient;
+      try {
+        const mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm');
+        createClient = mod.createClient;
+      } catch {
+        return {
+          success: false,
+          error:
+            '无法加载上传组件（浏览器未能加载 jsDelivr 上的 Supabase 库）。请检查网络，或将文件压缩到约 3MB 以下后重试。'
+        };
+      }
+
+      const supabase = createClient(cfg.url, cfg.anonKey);
+      const bytes = _base64ToUint8Array(base64Content);
+      const { error: upErr } = await supabase.storage
+        .from('meeting-files')
+        .uploadToSignedUrl(prep.path, prep.token, bytes, { contentType: 'application/octet-stream' });
+
+      if (upErr) {
+        return { success: false, error: upErr.message || '上传到云存储失败' };
+      }
+
+      try {
+        await fetch('/api/storage/register-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meetingId,
+            fileName: safeName,
+            fileSize: bytes.length
+          })
+        });
+      } catch { /* 元数据登记失败不影响已上传文件 */ }
+
+      const relPath = prep.path;
+      const storedFileName = relPath.includes('/')
+        ? relPath.slice(relPath.lastIndexOf('/') + 1)
+        : relPath;
+      return { success: true, path: `supabase:${relPath}`, storedFileName };
+    } catch (err) {
+      return { success: false, error: err.message || '网络错误' };
+    }
+  },
+
+  /** 仅适合极小文件：整包 JSON 经 Vercel，易触发 HTTP 413 */
+  async _uploadSmallViaVercel(fileName, meetingId, base64Content) {
     try {
       const res = await fetch('/api/storage/upload', {
         method: 'POST',
@@ -35,7 +112,7 @@ const StorageClient = {
       if (!res.ok || !data.ok) {
         return { success: false, error: data.error || `上传失败 (HTTP ${res.status})` };
       }
-      return { success: true, path: `supabase:${data.path}` };
+      return { success: true, path: `supabase:${data.path}`, storedFileName: fileName };
     } catch (err) {
       return { success: false, error: err.message || '网络错误' };
     }

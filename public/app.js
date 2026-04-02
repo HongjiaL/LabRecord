@@ -1059,6 +1059,7 @@ class MeetingApp {
               const result = await FileAPI.upload(b64, pptFileName, meetingId);
               if (result.success) {
                 finalPptDataUrl = result.path;
+                if (result.storedFileName) pptFileName = result.storedFileName;
               } else {
                 alert(`PPT 上传到云盘失败：${result.error || '未知错误'}。本次保存将不包含该 PPT 附件。`);
                 finalPptDataUrl = '';
